@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Natural Language to SQL</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        --success-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      }
+
+      body {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        min-height: 100vh;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      .gradient-card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+      }
+
+      .gradient-btn {
+        background: var(--primary-gradient);
+        border: none;
+        color: white;
+        font-weight: 600;
+        transition: all 0.3s ease;
+      }
+
+      .gradient-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        color: white;
+      }
+
+      .gradient-btn:disabled {
+        opacity: 0.6;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .status-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+
+      .status-connected {
+        background-color: #28a745;
+        animation: pulse 2s infinite;
+      }
+
+      .status-disconnected {
+        background-color: #dc3545;
+      }
+
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+        }
+        70% {
+          box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+        }
+      }
+
+      .table-card {
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+
+      .table-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.1);
+      }
+
+      .query-result {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .loading-spinner {
+        display: none;
+      }
+
+      .loading-spinner.show {
+        display: inline-block;
+      }
+
+      .fade-in {
+        animation: fadeIn 0.5s ease-in;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      pre[class*="language-"] {
+        border-radius: 8px;
+        margin: 0;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      .hero-section {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+      }
+
+      .feature-icon {
+        font-size: 2rem;
+        margin-bottom: 1rem;
+        color: #667eea;
+      }
+
+      .connection-status {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1050;
+      }
+
+      .table-schema {
+        font-size: 0.85rem;
+      }
+
+      .table-schema ul {
+        max-height: 150px;
+        overflow-y: auto;
+      }
+
+      .btn-loading {
+        position: relative;
+      }
+
+      .btn-loading:disabled::after {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        margin: auto;
+        border: 2px solid transparent;
+        border-top-color: #ffffff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        right: 0;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Connection Status -->
+    <div class="connection-status">
+      <div class="d-flex gap-2">
+        <span class="badge bg-secondary">
+          <span
+            id="db-status"
+            class="status-indicator status-disconnected"
+          ></span>
+          Database
+        </span>
+        <span class="badge bg-secondary">
+          <span
+            id="llm-status"
+            class="status-indicator status-disconnected"
+          ></span>
+          AI
+        </span>
+      </div>
+    </div>
+
+    <!-- Hero Section -->
+    <div class="hero-section">
+      <div class="container">
+        <div class="row align-items-center">
+          <div class="col-md-8">
+            <h1 class="display-4 fw-bold mb-3">
+              <i class="fas fa-database me-3"></i>
+              Natural Language to SQL
+            </h1>
+            <p class="lead">
+              Transform your questions into powerful Oracle SQL queries with AI
+              assistance
+            </p>
+          </div>
+          <div class="col-md-4 text-end">
+            <div class="d-flex justify-content-end gap-3">
+              <div class="text-center">
+                <i class="fas fa-robot feature-icon"></i>
+                <p class="mb-0">AI Powered</p>
+              </div>
+              <div class="text-center">
+                <i class="fas fa-bolt feature-icon"></i>
+                <p class="mb-0">Fast & Accurate</p>
+              </div>
+              <div class="text-center">
+                <i class="fas fa-shield-alt feature-icon"></i>
+                <p class="mb-0">Secure</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container-fluid">
+      <div class="row">
+        <!-- Sidebar -->
+        <div class="col-md-3">
+          <div class="card gradient-card border-0 shadow-lg">
+            <div class="card-header bg-transparent border-0">
+              <h5 class="mb-0"><i class="fas fa-cog me-2"></i>Configuration</h5>
+            </div>
+            <div class="card-body">
+              <!-- Database Connection -->
+              <div class="mb-4">
+                <h6 class="text-muted mb-3">
+                  <i class="fas fa-database me-2"></i>Oracle Database Connection
+                </h6>
+                <form id="db-form">
+                  <div class="mb-2">
+                    <input
+                      type="text"
+                      class="form-control form-control-sm"
+                      id="db-host"
+                      placeholder="Host"
+                      value="localhost"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <input
+                      type="text"
+                      class="form-control form-control-sm"
+                      id="db-port"
+                      placeholder="Port"
+                      value="1521"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <input
+                      type="text"
+                      class="form-control form-control-sm"
+                      id="db-service"
+                      placeholder="Service Name"
+                      value="ORCL"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <input
+                      type="text"
+                      class="form-control form-control-sm"
+                      id="db-username"
+                      placeholder="Username"
+                    />
+                  </div>
+                  <div class="mb-3">
+                    <input
+                      type="password"
+                      class="form-control form-control-sm"
+                      id="db-password"
+                      placeholder="Password"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    class="btn gradient-btn btn-sm w-100 btn-loading"
+                    id="db-connect-btn"
+                  >
+                    <i class="fas fa-plug me-2"></i>Connect Database
+                  </button>
+                </form>
+              </div>
+
+              <!-- AI Configuration -->
+              <div class="mb-4">
+                <h6 class="text-muted mb-3">
+                  <i class="fas fa-robot me-2"></i>AI Configuration
+                </h6>
+                <form id="llm-form">
+                  <div class="mb-2">
+                    <select class="form-select form-select-sm" id="llm-type">
+                      <option value="gemini">Google Gemini</option>
+                      <option value="ollama">Ollama (Local/Remote)</option>
+                    </select>
+                  </div>
+
+                  <!-- Gemini Configuration -->
+                  <div id="gemini-config">
+                    <div class="mb-2">
+                      <input
+                        type="password"
+                        class="form-control form-control-sm"
+                        id="api-key"
+                        placeholder="Google AI API Key"
+                      />
+                      <small class="text-muted">
+                        Get your key from
+                        <a href="https://ai.google.dev/" target="_blank"
+                          >Google AI Studio</a
+                        >
+                      </small>
+                    </div>
+                    <div class="mb-3">
+                      <select
+                        class="form-select form-select-sm"
+                        id="gemini-model-choice"
+                      >
+                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                        <option value="gemini-2.5-flash">
+                          Gemini 2.5 Flash
+                        </option>
+                        <option value="gemini-2.5-flash-lite-preview-06-17">
+                          Gemini 2.5 Flash-Lite Preview 06-17
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- Ollama Configuration -->
+                  <div id="ollama-config" style="display: none">
+                    <div class="mb-2">
+                      <input
+                        type="text"
+                        class="form-control form-control-sm"
+                        id="ollama-base-url"
+                        placeholder="Ollama Base URL"
+                        value="http://localhost:11434"
+                      />
+                      <small class="text-muted">
+                        Default: http://localhost:11434 (for local Ollama)
+                      </small>
+                    </div>
+                    <div class="mb-3">
+                      <div class="input-group">
+                        <input
+                          type="text"
+                          class="form-control form-control-sm"
+                          id="ollama-model-input"
+                          placeholder="Enter model name (e.g., llama3.2:latest, mistral:7b)"
+                        />
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary btn-sm"
+                          id="add-model-btn"
+                        >
+                          <i class="fas fa-plus"></i>
+                        </button>
+                      </div>
+                      <small class="text-muted">
+                        Type your model name and click + to add it
+                      </small>
+                    </div>
+                    <div class="mb-3">
+                      <select
+                        class="form-select form-select-sm"
+                        id="ollama-model-choice"
+                      >
+                        <option value="">Select a model...</option>
+                      </select>
+                      <small class="text-muted">
+                        Select from your added models
+                      </small>
+                    </div>
+                    <div class="mb-3">
+                      <button
+                        type="button"
+                        class="btn btn-outline-info btn-sm w-100"
+                        id="check-models-btn"
+                      >
+                        <i class="fas fa-search me-2"></i>Check Available Models
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    class="btn gradient-btn btn-sm w-100 btn-loading"
+                    id="ai-init-btn"
+                  >
+                    <i class="fas fa-rocket me-2"></i>Initialize AI
+                  </button>
+                </form>
+              </div>
+
+              <!-- Database Info -->
+              <div id="db-info" style="display: none">
+                <h6 class="text-muted mb-3">
+                  <i class="fas fa-info-circle me-2"></i>Database Tables
+                </h6>
+                <div class="mb-2">
+                  <span class="badge bg-primary" id="table-count"
+                    >0 Tables</span
+                  >
+                </div>
+                <div class="mb-3">
+                  <input
+                    type="text"
+                    class="form-control form-control-sm"
+                    id="table-search"
+                    placeholder="Search tables..."
+                  />
+                </div>
+                <div
+                  id="tables-list"
+                  class="mb-3"
+                  style="max-height: 200px; overflow-y: auto"
+                >
+                  <!-- Tables will be loaded here -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tips Card -->
+          <div class="card gradient-card border-0 shadow-lg mt-3">
+            <div class="card-header bg-transparent border-0">
+              <h6 class="mb-0">
+                <i class="fas fa-lightbulb me-2"></i>Query Tips
+              </h6>
+            </div>
+            <div class="card-body">
+              <small class="text-muted">
+                • Select relevant tables first<br />
+                • Be specific in your questions<br />
+                • Include date ranges and conditions<br />
+                • Use table relationships<br />
+                • Review generated SQL before execution
+              </small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="col-md-9">
+          <!-- Table Selection -->
+          <div class="card gradient-card border-0 shadow-lg mb-4">
+            <div class="card-header bg-transparent border-0">
+              <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                  <i class="fas fa-table me-2"></i>Choose which tables to
+                  include in the AI context:
+                </h5>
+              </div>
+            </div>
+            <div class="card-body">
+              <!-- Tag-style selection bar -->
+              <div class="mb-2" id="selected-tables-tags"></div>
+              <!-- Table add dropdown -->
+              <div class="mb-3 d-flex align-items-center gap-2">
+                <input
+                  type="text"
+                  class="form-control"
+                  id="table-search-bar"
+                  placeholder="Search tables..."
+                  style="max-width: 200px"
+                />
+                <select
+                  class="form-select"
+                  id="table-dropdown-bar"
+                  style="max-width: 300px"
+                >
+                  <option value="">Add table...</option>
+                </select>
+              </div>
+              <!-- Summary bar -->
+              <div
+                class="mb-3"
+                id="selected-summary-bar"
+                style="display: none"
+              ></div>
+              <!-- Collapsible schema/sample data section -->
+              <div class="accordion" id="schemaAccordion" style="display: none">
+                <div class="accordion-item">
+                  <h2 class="accordion-header" id="headingSchema">
+                    <button
+                      class="accordion-button collapsed"
+                      type="button"
+                      data-bs-toggle="collapse"
+                      data-bs-target="#collapseSchema"
+                      aria-expanded="false"
+                      aria-controls="collapseSchema"
+                    >
+                      <i class="fas fa-search me-2"></i>View Selected Table
+                      Schemas & Sample Data
+                    </button>
+                  </h2>
+                  <div
+                    id="collapseSchema"
+                    class="accordion-collapse collapse"
+                    aria-labelledby="headingSchema"
+                    data-bs-parent="#schemaAccordion"
+                  >
+                    <div class="accordion-body" id="selected-schemas-body">
+                      <!-- Schemas will be loaded here -->
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Query Interface -->
+          <div class="card gradient-card border-0 shadow-lg mb-4">
+            <div class="card-header bg-transparent border-0">
+              <h5 class="mb-0">
+                <i class="fas fa-comment-alt me-2"></i>Ask Your Question
+              </h5>
+            </div>
+            <div class="card-body">
+              <form id="query-form">
+                <div class="mb-3">
+                  <textarea
+                    class="form-control"
+                    id="natural-query"
+                    rows="4"
+                    placeholder="e.g., Show me all customers who made orders in the last 30 days with order totals greater than 1000"
+                  ></textarea>
+                </div>
+                <div class="row align-items-center">
+                  <div class="col-md-6">
+                    <div class="form-check">
+                      <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="include-sample"
+                        checked
+                      />
+                      <label class="form-check-label" for="include-sample">
+                        Include sample data for better SQL generation
+                      </label>
+                    </div>
+                  </div>
+                  <div class="col-md-6 text-end">
+                    <button
+                      type="submit"
+                      class="btn gradient-btn btn-loading"
+                      id="generate-btn"
+                    >
+                      <i class="fas fa-magic me-2"></i>Generate SQL
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              <!-- Generated SQL Section -->
+              <div class="mt-3" id="sql-section" style="display: none">
+                <hr />
+                <label class="form-label fw-bold">Generated SQL:</label>
+                <textarea
+                  class="form-control"
+                  id="generated-sql"
+                  rows="5"
+                  style="font-family: monospace; font-size: 1rem"
+                ></textarea>
+                <div
+                  class="d-flex justify-content-between align-items-center mt-2"
+                >
+                  <small class="text-muted"
+                    >Review and edit the generated SQL before execution</small
+                  >
+                  <div>
+                    <button
+                      class="btn btn-outline-secondary btn-sm me-2"
+                      id="copy-sql-btn"
+                    >
+                      <i class="fas fa-copy me-1"></i>Copy SQL
+                    </button>
+                    <button
+                      class="btn btn-success btn-sm btn-loading"
+                      id="run-sql-btn"
+                    >
+                      <i class="fas fa-play me-1"></i>Execute Query
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Query Results -->
+          <div
+            class="card gradient-card border-0 shadow-lg mb-4"
+            id="results-card"
+            style="display: none"
+          >
+            <div class="card-header bg-transparent border-0">
+              <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                  <i class="fas fa-table me-2"></i>Query Results
+                </h5>
+                <span class="badge bg-success" id="result-count">0 rows</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div id="query-result-table" class="query-result"></div>
+              <div class="mt-3 text-end">
+                <a
+                  href="#"
+                  id="download-results"
+                  class="btn btn-primary btn-sm"
+                  style="display: none"
+                >
+                  <i class="fas fa-download me-1"></i>Download CSV
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Alerts -->
+          <div id="alert-area"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+
+    <script>
+      $(document).ready(function () {
+        let allTables = [];
+        let selectedTables = [];
+        let schemaInfo = {};
+        let expandedTable = null;
+
+        function showAlert(type, message) {
+          const alertHtml = `
+            <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+              ${message}
+              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>`;
+          $("#alert-area").html(alertHtml);
+
+          // Auto-dismiss success alerts after 5 seconds
+          if (type === "success") {
+            setTimeout(() => {
+              $(".alert").alert("close");
+            }, 5000);
+          }
+        }
+
+        function updateDbStatus(connected) {
+          $("#db-status")
+            .removeClass("status-connected status-disconnected")
+            .addClass(connected ? "status-connected" : "status-disconnected");
+        }
+
+        function updateLlmStatus(connected) {
+          $("#llm-status")
+            .removeClass("status-connected status-disconnected")
+            .addClass(connected ? "status-connected" : "status-disconnected");
+        }
+
+        function setButtonLoading(buttonId, loading) {
+          const $btn = $(buttonId);
+          if (loading) {
+            $btn
+              .prop("disabled", true)
+              .find("i")
+              .removeClass()
+              .addClass("fas fa-spinner fa-spin me-2");
+          } else {
+            $btn.prop("disabled", false);
+            // Restore original icon
+            if (buttonId === "#db-connect-btn") {
+              $btn.find("i").removeClass().addClass("fas fa-plug me-2");
+            } else if (buttonId === "#ai-init-btn") {
+              $btn.find("i").removeClass().addClass("fas fa-rocket me-2");
+            } else if (buttonId === "#generate-btn") {
+              $btn.find("i").removeClass().addClass("fas fa-magic me-2");
+            } else if (buttonId === "#run-sql-btn") {
+              $btn.find("i").removeClass().addClass("fas fa-play me-1");
+            }
+          }
+        }
+
+        // Database connection
+        $("#db-form").on("submit", function (e) {
+          e.preventDefault();
+
+          const data = {
+            host: $("#db-host").val().trim(),
+            port: $("#db-port").val().trim(),
+            service_name: $("#db-service").val().trim(),
+            username: $("#db-username").val().trim(),
+            password: $("#db-password").val(),
+          };
+
+          // Validate form
+          if (
+            !data.host ||
+            !data.port ||
+            !data.service_name ||
+            !data.username ||
+            !data.password
+          ) {
+            showAlert(
+              "warning",
+              "Please fill in all database connection fields."
+            );
+            return;
+          }
+
+          setButtonLoading("#db-connect-btn", true);
+
+          $.ajax({
+            url: "/connect_db",
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(data),
+            success: function (res) {
+              setButtonLoading("#db-connect-btn", false);
+              if (res.success) {
+                showAlert(
+                  "success",
+                  `${res.message} Found ${res.table_count} tables.`
+                );
+                updateDbStatus(true);
+                $("#db-info").show();
+                $("#table-count").text(`${res.table_count} Tables`);
+                loadTables();
+              } else {
+                showAlert("danger", res.message);
+                updateDbStatus(false);
+              }
+            },
+            error: function (xhr, status, error) {
+              setButtonLoading("#db-connect-btn", false);
+              showAlert(
+                "danger",
+                "Failed to connect to database. Please check your connection details."
+              );
+              updateDbStatus(false);
+            },
+          });
+        });
+
+        // AI initialization
+        $("#llm-form").on("submit", function (e) {
+          e.preventDefault();
+
+          const llmType = $("#llm-type").val();
+          let data = { llm_type: llmType };
+
+          if (llmType === "gemini") {
+            const apiKey = $("#api-key").val().trim();
+            if (!apiKey) {
+              showAlert("warning", "Please enter your Google AI API key.");
+              return;
+            }
+            data.api_key = apiKey;
+            data.model = $("#gemini-model-choice").val();
+          } else if (llmType === "ollama") {
+            const baseUrl = $("#ollama-base-url").val().trim();
+            if (!baseUrl) {
+              showAlert("warning", "Please enter the Ollama base URL.");
+              return;
+            }
+            data.base_url = baseUrl;
+            data.model = $("#ollama-model-choice").val();
+          }
+
+          setButtonLoading("#ai-init-btn", true);
+
+          $.ajax({
+            url: "/init_llm",
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(data),
+            success: function (res) {
+              setButtonLoading("#ai-init-btn", false);
+              if (res.success) {
+                showAlert("success", res.message);
+                updateLlmStatus(true);
+              } else {
+                showAlert("danger", res.message);
+                updateLlmStatus(false);
+              }
+            },
+            error: function () {
+              setButtonLoading("#ai-init-btn", false);
+              showAlert(
+                "danger",
+                "Failed to initialize AI. Please check your configuration."
+              );
+              updateLlmStatus(false);
+            },
+          });
+        });
+
+        // Handle LLM type change
+        $("#llm-type").on("change", function () {
+          const llmType = $(this).val();
+          if (llmType === "gemini") {
+            $("#gemini-config").show();
+            $("#ollama-config").hide();
+          } else if (llmType === "ollama") {
+            $("#gemini-config").hide();
+            $("#ollama-config").show();
+          }
+        });
+
+        // Store added Ollama models
+        let addedOllamaModels = [];
+
+        // Handle adding Ollama model
+        $("#add-model-btn").on("click", function () {
+          addOllamaModel();
+        });
+
+        // Handle Enter key in model input
+        $("#ollama-model-input").on("keypress", function (e) {
+          if (e.which === 13) {
+            // Enter key
+            e.preventDefault();
+            addOllamaModel();
+          }
+        });
+
+        function addOllamaModel() {
+          const modelName = $("#ollama-model-input").val().trim();
+          if (!modelName) {
+            showAlert("warning", "Please enter a model name.");
+            return;
+          }
+
+          if (addedOllamaModels.includes(modelName)) {
+            showAlert("warning", "This model is already added.");
+            return;
+          }
+
+          addedOllamaModels.push(modelName);
+          updateOllamaModelDropdown();
+          $("#ollama-model-input").val("");
+          showAlert("success", `Model "${modelName}" added successfully!`);
+        }
+
+        function updateOllamaModelDropdown() {
+          const $dropdown = $("#ollama-model-choice");
+          $dropdown.empty();
+          $dropdown.append('<option value="">Select a model...</option>');
+
+          addedOllamaModels.forEach(function (model) {
+            $dropdown.append(`<option value="${model}">${model}</option>`);
+          });
+        }
+
+        // Load tables from backend
+        function loadTables() {
+          $.get("/get_tables", function (res) {
+            allTables = res.tables || [];
+            renderTableSelection();
+          }).fail(function () {
+            showAlert("danger", "Failed to load tables from database.");
+          });
+        }
+
+        // Render tag-style selected tables bar
+        function renderSelectedTablesTags() {
+          const $tags = $("#selected-tables-tags");
+          $tags.empty();
+          selectedTables.forEach(function (table) {
+            $tags.append(`
+              <span class="badge bg-secondary me-2 mb-1" style="font-size:1rem;">
+                ${table}
+                <button type="button" class="btn btn-sm btn-link text-white ms-1 remove-table-tag" data-table="${table}" style="padding:0 0.25rem;line-height:1;vertical-align:middle;">
+                  <i class="fas fa-times"></i>
+                </button>
+              </span>
+            `);
+          });
+        }
+
+        // Render summary bar
+        function renderSelectedSummaryBar() {
+          const $bar = $("#selected-summary-bar");
+          if (selectedTables.length) {
+            $bar.html(
+              `<div class="alert alert-info mb-0"><i class="fas fa-check-circle me-2"></i>Selected ${
+                selectedTables.length
+              } table(s): ${selectedTables.join(", ")}</div>`
+            );
+            $bar.show();
+          } else {
+            $bar.hide();
+          }
+        }
+
+        // Render schemas/sample data for selected tables
+        function renderSelectedSchemas() {
+          const $accordion = $("#schemaAccordion");
+          const $body = $("#selected-schemas-body");
+          if (selectedTables.length) {
+            $accordion.show();
+            $body.html('<div class="text-muted">Loading schemas...</div>');
+            // Load schemas for all selected tables
+            let schemaHtml = "";
+            let loaded = 0;
+            selectedTables.forEach(function (table) {
+              $.get(`/get_table_info/${table}`, function (res) {
+                schemaHtml += `<div class="mb-4"><h6><i class="fas fa-table me-2"></i>${table}</h6>`;
+                if (res.schema && res.schema.columns) {
+                  schemaHtml += `<div class="table-schema">`;
+                  schemaHtml += `<strong>Columns (${res.schema.columns.length}):</strong><br>`;
+                  schemaHtml += `<ul class="list-unstyled mb-2" id="schema-list-${table}">`;
+                  res.schema.columns.slice(0, 5).forEach(function (col) {
+                    let typeInfo = col.type;
+                    if (col.length && ["VARCHAR2", "CHAR"].includes(col.type)) {
+                      typeInfo += `(${col.length})`;
+                    } else if (col.precision && col.type === "NUMBER") {
+                      typeInfo += col.scale
+                        ? `(${col.precision},${col.scale})`
+                        : `(${col.precision})`;
+                    }
+                    schemaHtml += `<li><small><strong>${col.name}</strong> - ${typeInfo}</small></li>`;
+                  });
+                  if (res.schema.columns.length > 5) {
+                    schemaHtml += `<li><small class="text-muted">... and ${
+                      res.schema.columns.length - 5
+                    } more columns</small></li>`;
+                    schemaHtml += `<button class="btn btn-link btn-sm p-0 show-full-schema" data-table="${table}" style="vertical-align:middle;">Show all columns</button>`;
+                  }
+                  schemaHtml += `</ul>`;
+                  // Add related tables section based on foreign keys
+                  if (
+                    res.schema.foreign_keys &&
+                    Object.keys(res.schema.foreign_keys).length > 0
+                  ) {
+                    const relatedTables = [
+                      ...new Set(
+                        Object.values(res.schema.foreign_keys).map(
+                          (fk) => fk.references_table
+                        )
+                      ),
+                    ];
+                    schemaHtml += `<strong>Related Tables:</strong><br>`;
+                    schemaHtml += `<ul class="list-unstyled mb-2">`;
+                    relatedTables.forEach(function (rt) {
+                      schemaHtml += `<li><small>${rt}</small></li>`;
+                    });
+                    schemaHtml += `</ul>`;
+                  }
+                  if (
+                    res.schema.foreign_keys &&
+                    Object.keys(res.schema.foreign_keys).length > 0
+                  ) {
+                    schemaHtml += `<strong>Foreign Keys:</strong><br>`;
+                    schemaHtml += `<ul class="list-unstyled mb-2">`;
+                    Object.entries(res.schema.foreign_keys).forEach(function ([
+                      col,
+                      fk,
+                    ]) {
+                      schemaHtml += `<li><small>${col} → ${fk.references_table}.${fk.references_column}</small></li>`;
+                    });
+                    schemaHtml += `</ul>`;
+                  }
+                  if (res.sample_data && res.sample_data.data.length > 0) {
+                    schemaHtml += `<small class="text-muted">${res.sample_data.data.length} sample rows available</small>`;
+                  }
+                  schemaHtml += `</div>`;
+                } else {
+                  schemaHtml +=
+                    '<small class="text-muted">Schema information not available</small>';
+                }
+                schemaHtml += `</div>`;
+                loaded++;
+                if (loaded === selectedTables.length) {
+                  $body.html(schemaHtml);
+                }
+              }).fail(function () {
+                schemaHtml += `<div class="mb-4"><h6><i class="fas fa-table me-2"></i>${table}</h6><small class="text-danger">Failed to load table info</small></div>`;
+                loaded++;
+                if (loaded === selectedTables.length) {
+                  $body.html(schemaHtml);
+                }
+              });
+            });
+          } else {
+            $accordion.hide();
+          }
+        }
+
+        // Populate dropdown for adding tables
+        function populateTableDropdownBar() {
+          const $dropdown = $("#table-dropdown-bar");
+          $dropdown.empty();
+          $dropdown.append('<option value="">Add table...</option>');
+          // Get search value, lowercase for case-insensitive search
+          const searchVal = $("#table-search-bar").val()
+            ? $("#table-search-bar").val().toLowerCase()
+            : "";
+          allTables.forEach(function (table) {
+            if (
+              !selectedTables.includes(table) &&
+              table.toLowerCase().includes(searchVal)
+            ) {
+              $dropdown.append(`<option value="${table}">${table}</option>`);
+            }
+          });
+        }
+
+        // Table search bar event
+        $(document).on("input", "#table-search-bar", function () {
+          populateTableDropdownBar();
+        });
+
+        // After adding a table
+        $(document).on("change", "#table-dropdown-bar", function () {
+          const tableName = $(this).val();
+          if (tableName && !selectedTables.includes(tableName)) {
+            selectedTables.push(tableName);
+            renderSelectedTablesTags();
+            renderSelectedSummaryBar();
+            renderSelectedSchemas();
+            populateTableDropdownBar(); // Ensure dropdown updates
+            updateSelectedCount();
+          }
+          $(this).val("");
+        });
+
+        // After removing a table
+        $(document).on("click", ".remove-table-tag", function () {
+          const tableName = $(this).data("table");
+          selectedTables = selectedTables.filter((t) => t !== tableName);
+          renderSelectedTablesTags();
+          renderSelectedSummaryBar();
+          renderSelectedSchemas();
+          populateTableDropdownBar(); // Ensure dropdown updates
+          updateSelectedCount();
+        });
+
+        // Initial rendering after loading tables
+        function renderTableSelection() {
+          renderSelectedTablesTags();
+          renderSelectedSummaryBar();
+          renderSelectedSchemas();
+          populateTableDropdownBar();
+        }
+
+        // Query form submission
+        $("#query-form").on("submit", function (e) {
+          e.preventDefault();
+
+          const query = $("#natural-query").val().trim();
+          if (!query) {
+            showAlert("warning", "Please enter a question.");
+            return;
+          }
+
+          if (!selectedTables.length) {
+            showAlert(
+              "warning",
+              "Please select at least one table for context."
+            );
+            return;
+          }
+
+          setButtonLoading("#generate-btn", true);
+          $("#sql-section").hide();
+          $("#results-card").hide();
+
+          const requestData = {
+            query: query,
+            tables: selectedTables,
+            include_sample: $("#include-sample").is(":checked"),
+          };
+
+          $.ajax({
+            url: "/generate_sql",
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(requestData),
+            success: function (res) {
+              setButtonLoading("#generate-btn", false);
+              if (res.success) {
+                $("#generated-sql").val(res.sql);
+                $("#sql-section").show().addClass("fade-in");
+                showAlert(
+                  "success",
+                  "SQL generated successfully! Review it before execution."
+                );
+              } else {
+                showAlert("danger", `Failed to generate SQL: ${res.message}`);
+              }
+            },
+            error: function () {
+              setButtonLoading("#generate-btn", false);
+              showAlert(
+                "danger",
+                "Failed to generate SQL. Please check your AI configuration and try again."
+              );
+            },
+          });
+        });
+
+        // Copy SQL to clipboard
+        $("#copy-sql-btn").on("click", function () {
+          const sql = $("#generated-sql").val();
+          navigator.clipboard
+            .writeText(sql)
+            .then(function () {
+              showAlert("success", "SQL copied to clipboard!");
+            })
+            .catch(function () {
+              showAlert("warning", "Failed to copy SQL to clipboard.");
+            });
+        });
+
+        // Execute SQL
+        $("#run-sql-btn").on("click", function () {
+          const sql = $("#generated-sql").val().trim();
+          if (!sql) {
+            showAlert("warning", "No SQL to execute.");
+            return;
+          }
+
+          setButtonLoading("#run-sql-btn", true);
+          $("#results-card").hide();
+
+          $.ajax({
+            url: "/execute_sql",
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify({ sql: sql }),
+            success: function (res) {
+              setButtonLoading("#run-sql-btn", false);
+              if (res.success) {
+                renderResults(res.result);
+                $("#results-card").show().addClass("fade-in");
+                showAlert(
+                  "success",
+                  `Query executed successfully! ${res.result.row_count} rows returned.`
+                );
+              } else {
+                showAlert("danger", `Query execution failed: ${res.message}`);
+              }
+            },
+            error: function () {
+              setButtonLoading("#run-sql-btn", false);
+              showAlert(
+                "danger",
+                "Failed to execute SQL. Please check your database connection."
+              );
+            },
+          });
+        });
+
+        // Render query results
+        function renderResults(result) {
+          const $resultTable = $("#query-result-table");
+
+          if (!result || !result.data || result.data.length === 0) {
+            $resultTable.html(
+              '<div class="text-center text-muted py-4"><i class="fas fa-info-circle me-2"></i>No results found.</div>'
+            );
+            $("#download-results").hide();
+            $("#result-count").text("0 rows");
+            return;
+          }
+
+          let html =
+            '<div class="table-responsive"><table class="table table-striped table-hover"><thead class="table-dark"><tr>';
+
+          // Add column headers
+          result.columns.forEach(function (col) {
+            html += `<th>${col}</th>`;
+          });
+          html += "</tr></thead><tbody>";
+
+          // Add data rows
+          result.data.forEach(function (row) {
+            html += "<tr>";
+            row.forEach(function (cell) {
+              const cellValue =
+                cell === null || cell === undefined
+                  ? '<span class="text-muted">NULL</span>'
+                  : String(cell);
+              html += `<td>${cellValue}</td>`;
+            });
+            html += "</tr>";
+          });
+
+          html += "</tbody></table></div>";
+          $resultTable.html(html);
+          $("#download-results").show();
+          $("#result-count").text(`${result.data.length} rows`);
+        }
+
+        // Download results
+        $("#download-results").on("click", function (e) {
+          e.preventDefault();
+          window.location.href = "/download_results";
+        });
+
+        // Initialize page
+        // Auto-focus on database username field
+        $("#db-username").focus();
+
+        // Initialize tooltips if Bootstrap tooltips are available
+        if (typeof bootstrap !== "undefined" && bootstrap.Tooltip) {
+          var tooltipTriggerList = [].slice.call(
+            document.querySelectorAll('[data-bs-toggle="tooltip"]')
+          );
+          var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+          });
+        }
+
+        // Show full schema modal handler
+        $(document).on("click", ".show-full-schema", function () {
+          const tableName = $(this).data("table");
+          $.get(`/get_table_info/${tableName}`, function (res) {
+            if (res.schema && res.schema.columns) {
+              let html = `<h6><i class='fas fa-table me-2'></i>${tableName}</h6>`;
+              html += `<ul class='list-unstyled'>`;
+              res.schema.columns.forEach(function (col) {
+                let typeInfo = col.type;
+                if (col.length && ["VARCHAR2", "CHAR"].includes(col.type)) {
+                  typeInfo += `(${col.length})`;
+                } else if (col.precision && col.type === "NUMBER") {
+                  typeInfo += col.scale
+                    ? `(${col.precision},${col.scale})`
+                    : `(${col.precision})`;
+                }
+                html += `<li><small><strong>${col.name}</strong> - ${typeInfo}</small></li>`;
+              });
+              html += `</ul>`;
+              $("#full-schema-modal-body").html(html);
+              $("#fullSchemaModal").modal("show");
+            }
+          });
+        });
+
+        // Check available Ollama models
+        $("#check-models-btn").on("click", function () {
+          const baseUrl = $("#ollama-base-url").val();
+          setButtonLoading("#check-models-btn", true);
+
+          $.get(
+            `/check_ollama_models?base_url=${encodeURIComponent(baseUrl)}`,
+            function (res) {
+              setButtonLoading("#check-models-btn", false);
+              if (res.success) {
+                let html = `<div class="mb-3"><strong>Found ${res.total_models} model(s):</strong></div>`;
+
+                if (res.models.length === 0) {
+                  html +=
+                    '<div class="text-muted">No models found. Make sure Ollama is running and models are installed.</div>';
+                } else {
+                  html +=
+                    '<div class="table-responsive"><table class="table table-sm">';
+                  html +=
+                    "<thead><tr><th>Model Name</th><th>Size</th><th>Parameters</th><th>Family</th><th>Modified</th></tr></thead><tbody>";
+
+                  res.models.forEach(function (model) {
+                    const size = model.size
+                      ? formatBytes(model.size)
+                      : "Unknown";
+                    const parameters = model.parameters || "Unknown";
+                    const family = model.family || "Unknown";
+                    const modified = model.modified_at
+                      ? new Date(model.modified_at).toLocaleDateString()
+                      : "Unknown";
+
+                    html += `<tr>
+                    <td><code>${model.name}</code></td>
+                    <td>${size}</td>
+                    <td>${parameters}</td>
+                    <td>${family}</td>
+                    <td>${modified}</td>
+                  </tr>`;
+                  });
+
+                  html += "</tbody></table></div>";
+                }
+
+                $("#models-modal-body").html(html);
+                $("#modelsModal").modal("show");
+              } else {
+                showAlert("danger", `Failed to check models: ${res.message}`);
+              }
+            }
+          ).fail(function () {
+            setButtonLoading("#check-models-btn", false);
+            showAlert(
+              "danger",
+              "Failed to connect to Ollama. Make sure it's running."
+            );
+          });
+        });
+
+        // Helper function to format bytes
+        function formatBytes(bytes) {
+          if (bytes === 0) return "0 Bytes";
+          const k = 1024;
+          const sizes = ["Bytes", "KB", "MB", "GB"];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return (
+            parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+          );
+        }
+
+        // Fix: Add updateSelectedCount function
+        function updateSelectedCount() {
+          $("#table-count").text(selectedTables.length + " Tables");
+        }
+      });
+    </script>
+
+    <!-- Add this just before </body> -->
+    <div
+      class="modal fade"
+      id="fullSchemaModal"
+      tabindex="-1"
+      aria-labelledby="fullSchemaModalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="fullSchemaModalLabel">
+              Full Table Schema
+            </h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body" id="full-schema-modal-body">
+            <!-- Full schema will be loaded here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Models Modal -->
+    <div
+      class="modal fade"
+      id="modelsModal"
+      tabindex="-1"
+      aria-labelledby="modelsModalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="modelsModalLabel">
+              <i class="fas fa-robot me-2"></i>Available Ollama Models
+            </h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body" id="models-modal-body">
+            <!-- Models will be loaded here -->
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
