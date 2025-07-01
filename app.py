@@ -11,6 +11,9 @@ import io
 import traceback
 from flask_session import Session 
 import tempfile
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
@@ -714,23 +717,18 @@ def init_llm():
     global llm_manager
     try:
         data = request.json
-        llm_type = data.get('llm_type', 'gemini')  # Default to gemini for backward compatibility
+        llm_type = data.get('llm_type', 'gemini')
         
         if llm_type == 'ollama':
             model_name = data.get('model', 'llama2')
             base_url = data.get('base_url', 'http://localhost:11434')
             llm_manager = OllamaLLMManager(model_name, base_url)
         else:  # gemini
-            api_key = data.get('api_key')
-            # Support Gemini 2.5 Flash, Flash-Lite Preview, and 1.5 Pro
-            supported_gemini_models = [
-                'gemini-2.5-flash',
-                'gemini-2.5-flash-lite-preview-06-17',
-                'gemini-1.5-pro',
-            ]
+            # Use the centralized key from environment variable
+            api_key = os.environ.get('GEMINI_API_KEY')
+            if not api_key:
+                return jsonify({'success': False, 'message': 'No centralized Gemini API key configured on the server.'})
             model_name = data.get('model', 'gemini-1.5-pro')
-            if model_name not in supported_gemini_models:
-                return jsonify({'success': False, 'message': f'Model {model_name} is not supported. Supported models: {", ".join(supported_gemini_models)}'})
             llm_manager = LLMManager(api_key, model_name)
         
         session['llm_initialized'] = True

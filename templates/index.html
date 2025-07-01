@@ -333,12 +333,12 @@
                         class="form-control form-control-sm"
                         id="api-key"
                         placeholder="Google AI API Key"
+                        disabled
+                        value="Centrally managed by admin"
                       />
                       <small class="text-muted">
-                        Get your key from
-                        <a href="https://ai.google.dev/" target="_blank"
-                          >Google AI Studio</a
-                        >
+                        The Gemini API key is managed by the server
+                        administrator.
                       </small>
                     </div>
                     <div class="mb-3">
@@ -785,12 +785,6 @@
           let data = { llm_type: llmType };
 
           if (llmType === "gemini") {
-            const apiKey = $("#api-key").val().trim();
-            if (!apiKey) {
-              showAlert("warning", "Please enter your Google AI API key.");
-              return;
-            }
-            data.api_key = apiKey;
             data.model = $("#gemini-model-choice").val();
           } else if (llmType === "ollama") {
             const baseUrl = $("#ollama-base-url").val().trim();
