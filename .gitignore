@@ -25,6 +25,7 @@ var/
 
 # Virtual environments
 venv/
+vebnv
 env/
 py_env/
 .venv/
