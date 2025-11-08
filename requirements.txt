@@ -6,3 +6,4 @@ pandas
 Werkzeug==2.3.7
 requests==2.31.0
 python-dotenv
+PyMySQL==1.1.0          # MySQL driver

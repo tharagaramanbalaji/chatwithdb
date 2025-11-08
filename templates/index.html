@@ -259,49 +259,86 @@
                   <i class="fas fa-database me-2"></i>Oracle Database Connection
                 </h6>
                 <form id="db-form">
-                  <div class="mb-2">
-                    <input
-                      type="text"
-                      class="form-control form-control-sm"
-                      id="db-host"
-                      placeholder="Host"
-                      value="localhost"
-                    />
+                  <!-- Add database type selection to your existing connection form -->
+                  <div class="form-group">
+                    <label for="dbType">Database Type:</label>
+                    <select id="dbType" class="form-control" onchange="toggleConnectionFields()">
+                        <option value="oracle">Oracle</option>
+                        <option value="mysql">MySQL</option>
+                    </select>
                   </div>
-                  <div class="mb-2">
-                    <input
-                      type="text"
-                      class="form-control form-control-sm"
-                      id="db-port"
-                      placeholder="Port"
-                      value="1521"
-                    />
+
+                  <!-- Oracle fields (existing) -->
+                  <div id="oracleFields">
+                    <div class="mb-2">
+                      <input
+                        type="text"
+                        class="form-control form-control-sm"
+                        id="db-host"
+                        placeholder="Host"
+                        value="localhost"
+                      />
+                    </div>
+                    <div class="mb-2">
+                      <input
+                        type="text"
+                        class="form-control form-control-sm"
+                        id="db-port"
+                        placeholder="Port"
+                        value="1521"
+                      />
+                    </div>
+                    <div class="mb-2">
+                      <input
+                        type="text"
+                        class="form-control form-control-sm"
+                        id="db-service"
+                        placeholder="Service Name"
+                        value="ORCL"
+                      />
+                    </div>
+                    <div class="mb-2">
+                      <input
+                        type="text"
+                        class="form-control form-control-sm"
+                        id="db-username"
+                        placeholder="Username"
+                      />
+                    </div>
+                    <div class="mb-3">
+                      <input
+                        type="password"
+                        class="form-control form-control-sm"
+                        id="db-password"
+                        placeholder="Password"
+                      />
+                    </div>
                   </div>
-                  <div class="mb-2">
-                    <input
-                      type="text"
-                      class="form-control form-control-sm"
-                      id="db-service"
-                      placeholder="Service Name"
-                      value="ORCL"
-                    />
+
+                  <!-- MySQL fields -->
+                  <div id="mysqlFields" style="display: none;">
+                    <div class="form-group">
+                      <label for="mysqlHost">Host:</label>
+                      <input type="text" id="mysqlHost" class="form-control" value="localhost">
+                    </div>
+                    <div class="form-group">
+                      <label for="mysqlPort">Port:</label>
+                      <input type="text" id="mysqlPort" class="form-control" value="3306">
+                    </div>
+                    <div class="form-group">
+                      <label for="mysqlDatabase">Database:</label>
+                      <input type="text" id="mysqlDatabase" class="form-control">
+                    </div>
+                    <div class="form-group">
+                      <label for="mysqlUsername">Username:</label>
+                      <input type="text" id="mysqlUsername" class="form-control">
+                    </div>
+                    <div class="form-group">
+                      <label for="mysqlPassword">Password:</label>
+                      <input type="password" id="mysqlPassword" class="form-control">
+                    </div>
                   </div>
-                  <div class="mb-2">
-                    <input
-                      type="text"
-                      class="form-control form-control-sm"
-                      id="db-username"
-                      placeholder="Username"
-                    />
-                  </div>
-                  <div class="mb-3">
-                    <input
-                      type="password"
-                      class="form-control form-control-sm"
-                      id="db-password"
-                      placeholder="Password"
-                    />
-                  </div>
+
                   <button
                     type="submit"
                     class="btn gradient-btn btn-sm w-100 btn-loading"
@@ -720,27 +757,58 @@
         $("#db-form").on("submit", function (e) {
           e.preventDefault();
 
-          const data = {
-            host: $("#db-host").val().trim(),
-            port: $("#db-port").val().trim(),
-            service_name: $("#db-service").val().trim(),
-            username: $("#db-username").val().trim(),
-            password: $("#db-password").val(),
-          };
+          const dbType = $("#dbType").val();
+          let connectionData = { db_type: dbType };
+
+          if (dbType === "mysql") {
+            connectionData = {
+              ...connectionData,
+              host: $("#mysqlHost").val(),
+              port: $("#mysqlPort").val(),
+              database: $("#mysqlDatabase").val(),
+              username: $("#mysqlUsername").val(),
+              password: $("#mysqlPassword").val(),
+            };
+          } else {
+            connectionData = {
+              ...connectionData,
+              username: $("#db-username").val().trim(),
+              password: $("#db-password").val(),
+              host: $("#db-host").val().trim(),
+              port: $("#db-port").val().trim(),
+              service_name: $("#db-service").val().trim(),
+            };
+          }
 
           // Validate form
-          if (
-            !data.host ||
-            !data.port ||
-            !data.service_name ||
-            !data.username ||
-            !data.password
-          ) {
-            showAlert(
-              "warning",
-              "Please fill in all database connection fields."
-            );
-            return;
+          if (dbType === "mysql") {
+            if (
+              !connectionData.host ||
+              !connectionData.port ||
+              !connectionData.database ||
+              !connectionData.username ||
+              !connectionData.password
+            ) {
+              showAlert(
+                "warning",
+                "Please fill in all MySQL connection fields."
+              );
+              return;
+            }
+          } else {
+            if (
+              !connectionData.host ||
+              !connectionData.port ||
+              !connectionData.service_name ||
+              !connectionData.username ||
+              !connectionData.password
+            ) {
+              showAlert(
+                "warning",
+                "Please fill in all Oracle connection fields."
+              );
+              return;
+            }
           }
 
           setButtonLoading("#db-connect-btn", true);
@@ -749,7 +817,7 @@
             url: "/connect_db",
             method: "POST",
             contentType: "application/json",
-            data: JSON.stringify(data),
+            data: JSON.stringify(connectionData),
             success: function (res) {
               setButtonLoading("#db-connect-btn", false);
               if (res.success) {
@@ -1340,6 +1408,65 @@
         function updateSelectedCount() {
           $("#table-count").text(selectedTables.length + " Tables");
         }
+
+        // Toggle connection fields based on selected database type
+        window.toggleConnectionFields = function () {
+          const dbType = document.getElementById("dbType").value;
+          const oracleFields = document.getElementById("oracleFields");
+          const mysqlFields = document.getElementById("mysqlFields");
+
+          if (dbType === "mysql") {
+            oracleFields.style.display = "none";
+            mysqlFields.style.display = "block";
+          } else {
+            oracleFields.style.display = "block";
+            mysqlFields.style.display = "none";
+          }
+        };
+
+        // Connect to database (MySQL or Oracle)
+        window.connectDatabase = function () {
+          const dbType = document.getElementById("dbType").value;
+          let connectionData = { db_type: dbType };
+
+          if (dbType === "mysql") {
+            connectionData = {
+              ...connectionData,
+              host: document.getElementById("mysqlHost").value,
+              port: document.getElementById("mysqlPort").value,
+              database: document.getElementById("mysqlDatabase").value,
+              username: document.getElementById("mysqlUsername").value,
+              password: document.getElementById("mysqlPassword").value,
+            };
+          } else {
+            connectionData = {
+              ...connectionData,
+              username: document.getElementById("username").value,
+              password: document.getElementById("password").value,
+              host: document.getElementById("host").value,
+              port: document.getElementById("port").value,
+              service_name: document.getElementById("serviceName").value,
+            };
+          }
+
+          // Rest of your existing connectDatabase function
+          fetch("/connect_db", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(connectionData),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.success) {
+                showNotification(data.message, "success");
+                loadTables();
+              } else {
+                showNotification(data.message, "error");
+              }
+            });
+        };
       });
     </script>
 

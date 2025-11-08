@@ -13,12 +13,17 @@ from flask_session import Session
 import tempfile
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 app.config['SESSION_TYPE'] = 'filesystem'  
 Session(app)
+
+# Global variables
+db_manager = None
+llm_manager = None
 
 class DatabaseManager:
     def __init__(self):
@@ -261,6 +266,234 @@ class DatabaseManager:
         finally:
             cursor.close()
 
+import pymysql
+import pandas as pd
+from typing import Dict, List
+
+class MySQLDatabaseManager:
+    def __init__(self):
+        self.connection = None
+        self.db_type = "mysql"
+        
+    def connect(self, host: str, port: str, database: str, username: str, password: str) -> bool:
+        """Connect to MySQL database"""
+        try:
+            self.connection = pymysql.connect(
+                host=host,
+                port=int(port),
+                database=database,
+                user=username,
+                password=password,
+                charset='utf8mb4'
+            )
+            return True
+        except Exception as e:
+            print(f"MySQL connection failed: {str(e)}")
+            return False
+    
+    def get_all_tables(self) -> List[str]:
+        """Get list of all tables in the MySQL database"""
+        if not self.connection:
+            return []
+        
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SHOW TABLES")
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error fetching MySQL tables: {str(e)}")
+            return []
+        finally:
+            cursor.close()
+    
+    def get_table_schema(self, table_names: List[str] = None) -> Dict:
+        """Get schema information for specified tables or all tables"""
+        if not self.connection:
+            return {}
+        
+        schema_info = {}
+        cursor = self.connection.cursor()
+        
+        try:
+            # Get all tables if none specified
+            if not table_names:
+                table_names = self.get_all_tables()
+            
+            # Get column information for each table
+            for table in table_names:
+                # Get column information
+                cursor.execute(f"DESCRIBE {table}")
+                columns = []
+                for row in cursor.fetchall():
+                    col_info = {
+                        'name': row[0],
+                        'type': row[1],
+                        'nullable': row[2],
+                        'key': row[3],
+                        'default': row[4],
+                        'extra': row[5]
+                    }
+                    columns.append(col_info)
+                
+                # Get foreign key information
+                cursor.execute("""
+                    SELECT 
+                        COLUMN_NAME,
+                        REFERENCED_TABLE_NAME,
+                        REFERENCED_COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = DATABASE() 
+                    AND TABLE_NAME = %s 
+                    AND REFERENCED_TABLE_NAME IS NOT NULL
+                """, (table,))
+                
+                foreign_keys = {}
+                for fk_row in cursor.fetchall():
+                    foreign_keys[fk_row[0]] = {
+                        'references_table': fk_row[1],
+                        'references_column': fk_row[2]
+                    }
+                
+                schema_info[table] = {
+                    'columns': columns,
+                    'foreign_keys': foreign_keys
+                }
+                
+        except Exception as e:
+            print(f"Error fetching MySQL schema: {str(e)}")
+        finally:
+            cursor.close()
+            
+        return schema_info
+    
+    def get_sample_data(self, table_name: str, limit: int = 5) -> pd.DataFrame:
+        """Get sample data from a table with better error handling"""
+        if not self.connection:
+            return pd.DataFrame()
+        
+        cursor = self.connection.cursor()
+        try:
+            # First check if table exists and has data
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name} LIMIT 1")
+            if cursor.fetchone()[0] == 0:
+                return pd.DataFrame()
+            
+            # Get sample data
+            cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+            columns = [desc[0] for desc in cursor.description]
+            data = cursor.fetchall()
+            
+            # Convert MySQL-specific data types and handle problematic values
+            processed_data = []
+            for row in data:
+                processed_row = []
+                for item in row:
+                    if item is None:
+                        processed_row.append(None)
+                    elif hasattr(item, 'read'):  # Handle BLOB/TEXT
+                        try:
+                            processed_row.append(str(item.read())[:100])  # Truncate large text
+                        except:
+                            processed_row.append("[BLOB/TEXT]")
+                    elif hasattr(item, 'date'):  # Handle MySQL date/datetime objects
+                        try:
+                            processed_row.append(item.strftime('%Y-%m-%d %H:%M:%S'))
+                        except:
+                            processed_row.append(str(item))
+                    else:
+                        try:
+                            # Convert to JSON-serializable types
+                            if pd.isna(item):
+                                processed_row.append(None)
+                            else:
+                                processed_row.append(str(item))
+                        except:
+                            processed_row.append(str(item))
+                processed_data.append(processed_row)
+            
+            df = pd.DataFrame(processed_data, columns=columns)
+            
+            # Convert any remaining problematic pandas types to strings
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str)
+                    df[col] = df[col].replace('NaT', None)
+                    df[col] = df[col].replace('nan', None)
+            
+            return df
+        except Exception as e:
+            print(f"Could not fetch sample data from {table_name}: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            cursor.close()
+    
+    def execute_query(self, sql: str) -> pd.DataFrame:
+        """Execute SQL query and return results as DataFrame"""
+        if not self.connection:
+            raise Exception("No database connection")
+        
+        # Remove trailing semicolon if present
+        sql = sql.strip().rstrip(';')
+        
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(sql)
+            
+            # For SELECT queries
+            if sql.strip().upper().startswith('SELECT'):
+                columns = [desc[0] for desc in cursor.description]
+                data = cursor.fetchall()
+                
+                # Process the data to handle MySQL-specific types
+                processed_data = []
+                for row in data:
+                    processed_row = []
+                    for item in row:
+                        if item is None:
+                            processed_row.append(None)
+                        elif hasattr(item, 'read'):  # Handle BLOB/TEXT
+                            try:
+                                processed_row.append(str(item.read())[:1000])
+                            except:
+                                processed_row.append("[BLOB/TEXT]")
+                        elif hasattr(item, 'date'):  # Handle MySQL date/datetime objects
+                            try:
+                                processed_row.append(item.strftime('%Y-%m-%d %H:%M:%S'))
+                            except:
+                                processed_row.append(str(item))
+                        elif isinstance(item, (int, float)):
+                            # Handle numeric types properly
+                            if pd.isna(item):
+                                processed_row.append(None)
+                            else:
+                                processed_row.append(item)
+                        else:
+                            # Convert everything else to string
+                            try:
+                                processed_row.append(str(item) if item is not None else None)
+                            except:
+                                processed_row.append("[UNCONVERTIBLE]")
+                    processed_data.append(processed_row)
+                
+                # Create DataFrame with processed data
+                df = pd.DataFrame(processed_data, columns=columns)
+                
+                # Final cleanup of any remaining problematic values
+                for col in df.columns:
+                    df[col] = df[col].where(pd.notnull(df[col]), None)
+                
+                return df
+            else:
+                # For INSERT/UPDATE/DELETE queries
+                self.connection.commit()
+                return pd.DataFrame({'Result': [f"Query executed successfully. Rows affected: {cursor.rowcount}"]})
+                
+        except Exception as e:
+            self.connection.rollback()
+            raise Exception(f"MySQL execution error: {str(e)}")
+        finally:
+            cursor.close()
+            
 class LLMManager:
     def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro"):
         try:
@@ -440,48 +673,18 @@ SELECT"""
         except Exception as e:
             raise Exception(f"Gemini API error: {str(e)}")
 
-class OllamaLLMManager:
-    def __init__(self, model_name: str = "llama2", base_url: str = "http://localhost:11434"):
-        self.model_name = model_name
-        self.base_url = base_url.rstrip('/')
-        # Test the connection and get model info
+class MySQLLLMManager:
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro"):
         try:
-            # First check if model exists
-            response = requests.get(f"{self.base_url}/api/tags", timeout=30)
-            if response.status_code == 200:
-                models = response.json().get('models', [])
-                model_found = any(model['name'] == self.model_name for model in models)
-                if not model_found:
-                    print(f"WARNING: Model {self.model_name} not found in available models: {[m['name'] for m in models]}")
-                    print(f"Available models: {[m['name'] for m in models]}")
-                    # Don't raise an exception, just warn - the model might be loading
-            
-            # Test the connection with a simple prompt
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": "Hello, test connection",
-                    "stream": False,
-                    "options": {
-                        "num_predict": 10  # Very short response for testing
-                    }
-                },
-                timeout=30  # Increased timeout
-            )
-            if response.status_code != 200:
-                raise Exception(f"Ollama API returned status {response.status_code}: {response.text}")
-            
-            print(f"SUCCESS: Connected to Ollama with model {self.model_name}")
-        except requests.exceptions.Timeout:
-            raise Exception(f"Ollama connection timed out after 30 seconds. This can happen if:\n1. Ollama is under heavy load\n2. The model {self.model_name} is still loading\n3. Your system is low on resources\n\nTry:\n1. Waiting a few minutes and trying again\n2. Using a smaller model\n3. Checking if Ollama is running: 'ollama list'")
-        except requests.exceptions.ConnectionError:
-            raise Exception(f"Cannot connect to Ollama at {self.base_url}. Make sure:\n1. Ollama is running (run 'ollama serve')\n2. The base URL is correct\n3. No firewall is blocking the connection\n4. Try: 'ollama list' to verify Ollama is running")
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model_name=model_name)
+            # Test the connection
+            self.model.generate_content("Hello, test connection")
         except Exception as e:
-            raise Exception(f"Failed to connect to Ollama: {str(e)}")
+            raise Exception(f"Failed to initialize Gemini: {str(e)}")
     
     def generate_sql(self, natural_query: str, selected_tables: List[str], full_schema_info: Dict, db_manager, include_sample_data: bool = True) -> str:
-        """Generate SQL from natural language query using selected table schemas and sample data"""
+        """Generate MySQL SQL from natural language query"""
         
         if not selected_tables:
             raise Exception("No tables selected for context")
@@ -500,19 +703,13 @@ class OllamaLLMManager:
                 schema_context += "Columns:\n"
                 for col in table_info['columns']:
                     type_info = col['type']
-                    if col['length'] and col['type'] in ['VARCHAR2', 'CHAR']:
-                        type_info += f"({col['length']})"
-                    elif col['precision'] and col['type'] in ['NUMBER']:
-                        if col['scale']:
-                            type_info += f"({col['precision']},{col['scale']})"
-                        else:
-                            type_info += f"({col['precision']})"
-                    
-                    nullable = "NULL" if col['nullable'] == 'Y' else "NOT NULL"
+                    nullable = "NULL" if col['nullable'] == 'YES' else "NOT NULL"
                     schema_context += f"  • {col['name']} - {type_info} - {nullable}"
                     
                     if col['default']:
                         schema_context += f" - Default: {col['default']}"
+                    if col['extra']:
+                        schema_context += f" - {col['extra']}"
                     schema_context += "\n"
                 
                 # Add foreign key information
@@ -527,7 +724,6 @@ class OllamaLLMManager:
                         sample_df = db_manager.get_sample_data(table, limit=3)
                         if not sample_df.empty:
                             schema_context += f"\nSample Data (3 rows):\n"
-                            # Convert DataFrame to a readable format
                             sample_data_str = sample_df.to_string(index=False, max_cols=10, max_colwidth=30)
                             schema_context += sample_data_str + "\n"
                             
@@ -539,7 +735,6 @@ class OllamaLLMManager:
                                 schema_context += f"  • {col}: {unique_values} unique values"
                                 if has_nulls:
                                     schema_context += " (contains nulls)"
-                                # Show sample values for better context
                                 sample_values = sample_df[col].dropna().unique()[:3]
                                 if len(sample_values) > 0:
                                     schema_context += f" - Sample values: {', '.join(str(v) for v in sample_values)}"
@@ -551,8 +746,28 @@ class OllamaLLMManager:
                 
                 schema_context += "\n"
         
+        # Get database type from session or detect from db_manager
+        db_type = getattr(db_manager, 'db_type', 'oracle')
+        
+        if db_type == 'mysql':
+            sql_guidelines = """MySQL SQL Guidelines:
+- Use MySQL-specific functions: NOW(), DATE(), STR_TO_DATE(), CONCAT(), IFNULL()
+- Use LIMIT for row limiting (not ROWNUM)
+- Use standard JOIN syntax (not Oracle's (+) syntax)
+- Use proper MySQL data types and casting
+- Use MySQL-specific aggregation and string functions
+- Use backticks for column/table names if they contain special characters
+- Use MySQL date functions: DATE(), YEAR(), MONTH(), DAY(), CURDATE(), NOW()"""
+        else:
+            sql_guidelines = """Oracle SQL Guidelines:
+- Use Oracle-specific functions: SYSDATE, TO_DATE, TO_CHAR, NVL, DECODE
+- Use ROWNUM for row limiting (not LIMIT)
+- Use (+) for outer joins in older Oracle syntax
+- Use proper Oracle data types and casting
+- Use Oracle-specific aggregation functions"""
+        
         prompt = f"""<|system|>
-You are an expert Oracle SQL developer. Your ONLY task is to convert natural language queries into Oracle SQL statements.
+You are an expert {db_type.upper()} SQL developer. Your ONLY task is to convert natural language queries into {db_type.upper()} SQL statements.
 
 CRITICAL RULES:
 1. Return ONLY the SQL query - nothing else
@@ -572,22 +787,17 @@ IMPORTANT CONTEXT USAGE:
 - The Sample Data section is provided ONLY to help you understand the kind of data in each column. DO NOT use sample values for filtering, limiting, or selection in your SQL. Do NOT assume the sample data is complete or representative of all possible values.
 - Always use the schema context for query structure, joins, and relationships. Use sample data only for context, not for query logic.
 
-Oracle SQL Guidelines:
-- Use Oracle-specific functions: SYSDATE, TO_DATE, TO_CHAR, NVL, DECODE
-- Use ROWNUM for row limiting (not LIMIT)
-- Use (+) for outer joins in older Oracle syntax
-- Use proper Oracle data types and casting
-- Use Oracle-specific aggregation functions
+{sql_guidelines}
 
 Database Schema and Sample Data:
 {schema_context}
 
 Instructions:
-- Generate ONLY the Oracle SQL query
+- Generate ONLY the {db_type.upper()} SQL query
 - Use exact table and column names from the schema above
 - For multiple tables, use appropriate JOINs based on foreign key relationships
 - Include proper WHERE clauses, GROUP BY, HAVING as needed
-- Use Oracle date functions for date comparisons and formatting
+- Use MySQL date functions for date comparisons and formatting
 - Ensure the query is safe (no DROP, TRUNCATE unless explicitly requested)
 - Consider the sample data patterns and data types shown, but do NOT use sample values for filtering or selection
 - Use the data insights to write appropriate conditions, but always rely on the schema for structure
@@ -595,37 +805,17 @@ Instructions:
 </s>
 
 <|user|>
-Convert to Oracle SQL: {natural_query}
+Convert to {db_type.upper()} SQL: {natural_query}
 </s>
 
 <|assistant|>
 SELECT"""
 
         try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "num_ctx": 8192,  # Increased context length for better understanding
-                        "num_predict": 1024,  # Increased response length for complex queries
-                        "temperature": 0.01,  # Very low temperature for deterministic SQL
-                        "top_p": 0.9,
-                        "top_k": 40,
-                    }
-                },
-                timeout=180 # Increased timeout to 2 minutes
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"Ollama API returned status {response.status_code}: {response.text}")
-            
-            result = response.json()
-            sql_query = result.get('response', '').strip()
-            
-            # Strict cleaning: Only keep lines that are part of a valid SQL statement
+            response = self.model.generate_content(prompt)
+            sql_query = response.text.strip()
+
+            # Clean the response (same logic as Oracle LLM manager)
             import re
             sql_keywords = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")
             lines = sql_query.split('\n')
@@ -635,47 +825,33 @@ SELECT"""
                 line = line.strip()
                 if not line:
                     continue
-                # Skip lines with explanations, markdown, or unwanted phrases
                 if any(skip in line.lower() for skip in [
                     'think:', 'thinking:', 'let me', 'i need to', 'okay,',
                     "here's", 'the sql query is', '```sql', '```', 'sql:',
                     'answer:', 'solution:', 'query:', 'result:'
                 ]):
                     continue
-                # Start collecting SQL when a valid keyword is found
                 if any(line.upper().startswith(kw) for kw in sql_keywords):
                     in_sql = True
                 if in_sql:
-                    # Stop if we hit a line that looks like an explanation or markdown again
                     if any(skip in line.lower() for skip in [
                         'think:', 'explanation:', 'answer:', 'solution:', 'query:', 'result:', '```']):
                         break
                     cleaned_lines.append(line)
-            # If no SQL was found, try to extract using regex
+            
             if not cleaned_lines:
                 sql_pattern = r"(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE)[\s\S]+"
                 match = re.search(sql_pattern, sql_query, re.IGNORECASE)
                 if match:
                     cleaned_lines = [match.group(0).strip()]
+            
             final_sql = ' '.join(cleaned_lines).strip()
-            # Final fallback: if still nothing, just return the original response
             if not final_sql:
                 final_sql = sql_query
-            # Debug: Print the cleaned SQL
-            print(f"DEBUG: Original response length: {len(sql_query)}")
-            print(f"DEBUG: Cleaned SQL length: {len(final_sql)}")
-            print(f"DEBUG: Final SQL: {final_sql[:200]}...")
+            
             return final_sql
-        except requests.exceptions.Timeout:
-            raise Exception("Ollama request timed out after 2 minutes. This can happen with larger models or slower hardware. Try:\n1. Using a smaller model (like llama3.2:3b or llama3.2:1b)\n2. Ensuring Ollama has enough RAM/CPU resources\n3. Closing other applications to free up resources")
-        except requests.exceptions.ConnectionError:
-            raise Exception("Cannot connect to Ollama. Make sure:\n1. Ollama is running (run 'ollama serve')\n2. The base URL is correct (default: http://localhost:11434)\n3. No firewall is blocking the connection")
         except Exception as e:
-            raise Exception(f"Ollama API error: {str(e)}")
-
-# Initialize global managers
-db_manager = DatabaseManager()
-llm_manager = None
+            raise Exception(f"Gemini API error: {str(e)}")
 
 @app.route('/')
 def index():
@@ -683,15 +859,30 @@ def index():
 
 @app.route('/connect_db', methods=['POST'])
 def connect_db():
+    global db_manager
     try:
         data = request.json
-        success = db_manager.connect(
-            data['username'], 
-            data['password'], 
-            data['host'], 
-            data['port'], 
-            data['service_name']
-        )
+        db_type = data.get('db_type', 'oracle')
+        
+        # Create appropriate database manager
+        if db_type == 'mysql':
+            db_manager = MySQLDatabaseManager()
+            success = db_manager.connect(
+                host=data['host'],
+                port=data['port'],
+                database=data['database'],
+                username=data['username'],
+                password=data['password']
+            )
+        else:  # oracle (existing)
+            db_manager = DatabaseManager()
+            success = db_manager.connect(
+                data['username'], 
+                data['password'], 
+                data['host'], 
+                data['port'], 
+                data['service_name']
+            )
         
         if success:
             # Load schema info
@@ -699,13 +890,15 @@ def connect_db():
             schema_info = db_manager.get_table_schema()
             
             session['db_connected'] = True
+            session['db_type'] = db_type
             session['all_tables'] = all_tables
             session['schema_info'] = schema_info
             
             return jsonify({
                 'success': True, 
-                'message': 'Connected successfully!',
-                'table_count': len(all_tables)
+                'message': f'Connected to {db_type.upper()} successfully!',
+                'table_count': len(all_tables),
+                'db_type': db_type
             })
         else:
             return jsonify({'success': False, 'message': 'Connection failed'})
@@ -718,23 +911,28 @@ def init_llm():
     try:
         data = request.json
         llm_type = data.get('llm_type', 'gemini')
+        db_type = session.get('db_type', 'oracle')
         
         if llm_type == 'ollama':
             model_name = data.get('model', 'llama2')
             base_url = data.get('base_url', 'http://localhost:11434')
             llm_manager = OllamaLLMManager(model_name, base_url)
         else:  # gemini
-            # Use the centralized key from environment variable
             api_key = os.environ.get('GEMINI_API_KEY')
             if not api_key:
                 return jsonify({'success': False, 'message': 'No centralized Gemini API key configured on the server.'})
             model_name = data.get('model', 'gemini-1.5-pro')
-            llm_manager = LLMManager(api_key, model_name)
+            
+            # Use MySQL-specific LLM manager if connected to MySQL
+            if db_type == 'mysql':
+                llm_manager = MySQLLLMManager(api_key, model_name)
+            else:
+                llm_manager = LLMManager(api_key, model_name)  # Oracle LLM manager
         
         session['llm_initialized'] = True
         session['llm_type'] = llm_type
         
-        return jsonify({'success': True, 'message': f'{llm_type.capitalize()} initialized successfully!'})
+        return jsonify({'success': True, 'message': f'{llm_type.capitalize()} initialized successfully for {db_type.upper()}!'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
