@@ -267,6 +267,8 @@ class DatabaseManager:
             cursor.close()
 
 import pymysql
+import psycopg2
+import psycopg2.extras
 import pandas as pd
 from typing import Dict, List
 
@@ -493,6 +495,255 @@ class MySQLDatabaseManager:
             raise Exception(f"MySQL execution error: {str(e)}")
         finally:
             cursor.close()
+
+class PostgreSQLDatabaseManager:
+    def __init__(self):
+        self.connection = None
+        self.db_type = "postgresql"
+        
+    def connect(self, host: str, port: str, database: str, username: str, password: str) -> bool:
+        """Connect to PostgreSQL database"""
+        try:
+            self.connection = psycopg2.connect(
+                host=host,
+                port=int(port),
+                database=database,
+                user=username,
+                password=password
+            )
+            return True
+        except Exception as e:
+            print(f"PostgreSQL connection failed: {str(e)}")
+            return False
+    
+    def get_all_tables(self) -> List[str]:
+        """Get list of all tables in the PostgreSQL database"""
+        if not self.connection:
+            return []
+        
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """)
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error fetching PostgreSQL tables: {str(e)}")
+            return []
+        finally:
+            cursor.close()
+    
+    def get_table_schema(self, table_names: List[str] = None) -> Dict:
+        """Get schema information for specified tables or all tables"""
+        if not self.connection:
+            return {}
+        
+        schema_info = {}
+        cursor = self.connection.cursor()
+        
+        try:
+            # Get all tables if none specified
+            if not table_names:
+                table_names = self.get_all_tables()
+            
+            # Get column information for each table
+            for table in table_names:
+                # Get column information
+                cursor.execute("""
+                    SELECT 
+                        column_name, 
+                        data_type, 
+                        is_nullable, 
+                        column_default,
+                        character_maximum_length,
+                        numeric_precision,
+                        numeric_scale
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' 
+                    AND table_name = %s
+                    ORDER BY ordinal_position
+                """, (table,))
+                
+                columns = []
+                for row in cursor.fetchall():
+                    col_info = {
+                        'name': row[0],
+                        'type': row[1],
+                        'nullable': row[2],
+                        'default': row[3],
+                        'length': row[4],
+                        'precision': row[5],
+                        'scale': row[6]
+                    }
+                    columns.append(col_info)
+                
+                # Get foreign key information
+                cursor.execute("""
+                    SELECT
+                        kcu.column_name,
+                        ccu.table_name AS foreign_table_name,
+                        ccu.column_name AS foreign_column_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                        AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_name = %s
+                """, (table,))
+                
+                foreign_keys = {}
+                for fk_row in cursor.fetchall():
+                    foreign_keys[fk_row[0]] = {
+                        'references_table': fk_row[1],
+                        'references_column': fk_row[2]
+                    }
+                
+                schema_info[table] = {
+                    'columns': columns,
+                    'foreign_keys': foreign_keys
+                }
+                
+        except Exception as e:
+            print(f"Error fetching PostgreSQL schema: {str(e)}")
+        finally:
+            cursor.close()
+            
+        return schema_info
+    
+    def get_sample_data(self, table_name: str, limit: int = 5) -> pd.DataFrame:
+        """Get sample data from a table with better error handling"""
+        if not self.connection:
+            return pd.DataFrame()
+        
+        cursor = self.connection.cursor()
+        try:
+            # First check if table exists and has data
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name} LIMIT 1")
+            if cursor.fetchone()[0] == 0:
+                return pd.DataFrame()
+            
+            # Get sample data
+            cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+            columns = [desc[0] for desc in cursor.description]
+            data = cursor.fetchall()
+            
+            # Convert PostgreSQL-specific data types and handle problematic values
+            processed_data = []
+            for row in data:
+                processed_row = []
+                for item in row:
+                    if item is None:
+                        processed_row.append(None)
+                    elif isinstance(item, (list, dict)):
+                        # Handle JSON/JSONB types
+                        processed_row.append(str(item)[:100])
+                    elif hasattr(item, 'date'):
+                        # Handle date/datetime objects
+                        try:
+                            processed_row.append(item.strftime('%Y-%m-%d %H:%M:%S'))
+                        except:
+                            processed_row.append(str(item))
+                    else:
+                        try:
+                            if pd.isna(item):
+                                processed_row.append(None)
+                            else:
+                                processed_row.append(str(item))
+                        except:
+                            processed_row.append(str(item))
+                processed_data.append(processed_row)
+            
+            df = pd.DataFrame(processed_data, columns=columns)
+            
+            # Convert any remaining problematic pandas types to strings
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str)
+                    df[col] = df[col].replace('NaT', None)
+                    df[col] = df[col].replace('nan', None)
+            
+            return df
+        except Exception as e:
+            print(f"Could not fetch sample data from {table_name}: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            cursor.close()
+    
+    def execute_query(self, sql: str) -> pd.DataFrame:
+        """Execute SQL query and return results as DataFrame"""
+        if not self.connection:
+            raise Exception("No database connection")
+        
+        # Remove trailing semicolon if present
+        sql = sql.strip().rstrip(';')
+        
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(sql)
+            
+            # For SELECT queries
+            if sql.strip().upper().startswith('SELECT'):
+                columns = [desc[0] for desc in cursor.description]
+                data = cursor.fetchall()
+                
+                # Process the data to handle PostgreSQL-specific types
+                processed_data = []
+                for row in data:
+                    processed_row = []
+                    for item in row:
+                        if item is None:
+                            processed_row.append(None)
+                        elif isinstance(item, (list, dict)):
+                            # Handle JSON/JSONB types
+                            try:
+                                processed_row.append(str(item)[:1000])
+                            except:
+                                processed_row.append("[JSON/JSONB]")
+                        elif hasattr(item, 'date'):
+                            # Handle date/datetime objects
+                            try:
+                                processed_row.append(item.strftime('%Y-%m-%d %H:%M:%S'))
+                            except:
+                                processed_row.append(str(item))
+                        elif isinstance(item, (int, float)):
+                            # Handle numeric types properly
+                            if pd.isna(item):
+                                processed_row.append(None)
+                            else:
+                                processed_row.append(item)
+                        else:
+                            # Convert everything else to string
+                            try:
+                                processed_row.append(str(item) if item is not None else None)
+                            except:
+                                processed_row.append("[UNCONVERTIBLE]")
+                    processed_data.append(processed_row)
+                
+                # Create DataFrame with processed data
+                df = pd.DataFrame(processed_data, columns=columns)
+                
+                # Final cleanup of any remaining problematic values
+                for col in df.columns:
+                    df[col] = df[col].where(pd.notnull(df[col]), None)
+                
+                return df
+            else:
+                # For INSERT/UPDATE/DELETE queries
+                self.connection.commit()
+                return pd.DataFrame({'Result': [f"Query executed successfully. Rows affected: {cursor.rowcount}"]})
+                
+        except Exception as e:
+            self.connection.rollback()
+            raise Exception(f"PostgreSQL execution error: {str(e)}")
+        finally:
+            cursor.close()
             
 class LLMManager:
     def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro"):
@@ -622,8 +873,7 @@ Instructions:
 Convert to Oracle SQL: {natural_query}
 </s>
 
-<|assistant|>
-SELECT"""
+<|assistant|>"""
 
         try:
             response = self.model.generate_content(prompt)
@@ -808,8 +1058,7 @@ Instructions:
 Convert to {db_type.upper()} SQL: {natural_query}
 </s>
 
-<|assistant|>
-SELECT"""
+<|assistant|>"""
 
         try:
             response = self.model.generate_content(prompt)
@@ -849,6 +1098,193 @@ SELECT"""
             if not final_sql:
                 final_sql = sql_query
             
+            # Debug: Print the cleaned SQL
+            print(f"DEBUG: MySQL Original response length: {len(sql_query)}")
+            print(f"DEBUG: MySQL Cleaned SQL length: {len(final_sql)}")
+            print(f"DEBUG: MySQL Final SQL: {final_sql[:200]}...")
+            
+            return final_sql
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")
+
+class PostgreSQLLLMManager:
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro"):
+        try:
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model_name=model_name)
+            # Test the connection
+            self.model.generate_content("Hello, test connection")
+        except Exception as e:
+            raise Exception(f"Failed to initialize Gemini: {str(e)}")
+    
+    def generate_sql(self, natural_query: str, selected_tables: List[str], full_schema_info: Dict, db_manager, include_sample_data: bool = True) -> str:
+        """Generate PostgreSQL SQL from natural language query"""
+        
+        if not selected_tables:
+            raise Exception("No tables selected for context")
+        
+        # Format schema information for selected tables only
+        schema_context = "Database Schema and Sample Data Context:\n"
+        schema_context += "=" * 60 + "\n\n"
+        
+        for table in selected_tables:
+            if table in full_schema_info:
+                table_info = full_schema_info[table]
+                schema_context += f"Table: {table}\n"
+                schema_context += "-" * (len(table) + 7) + "\n"
+                
+                # Add column information
+                schema_context += "Columns:\n"
+                for col in table_info['columns']:
+                    type_info = col['type']
+                    if col['length'] and col['type'] in ['character varying', 'character', 'varchar', 'char']:
+                        type_info += f"({col['length']})"
+                    elif col['precision'] and col['type'] in ['numeric', 'decimal']:
+                        if col['scale']:
+                            type_info += f"({col['precision']},{col['scale']})"
+                        else:
+                            type_info += f"({col['precision']})"
+                    
+                    nullable = "NULL" if col['nullable'] == 'YES' else "NOT NULL"
+                    schema_context += f"  • {col['name']} - {type_info} - {nullable}"
+                    
+                    if col['default']:
+                        schema_context += f" - Default: {col['default']}"
+                    schema_context += "\n"
+                
+                # Add foreign key information
+                if table_info['foreign_keys']:
+                    schema_context += "\nForeign Keys:\n"
+                    for fk_col, fk_info in table_info['foreign_keys'].items():
+                        schema_context += f"  • {fk_col} → {fk_info['references_table']}.{fk_info['references_column']}\n"
+                
+                # Add sample data if requested and available
+                if include_sample_data and db_manager:
+                    try:
+                        sample_df = db_manager.get_sample_data(table, limit=3)
+                        if not sample_df.empty:
+                            schema_context += f"\nSample Data (3 rows):\n"
+                            sample_data_str = sample_df.to_string(index=False, max_cols=10, max_colwidth=30)
+                            schema_context += sample_data_str + "\n"
+                            
+                            # Add data insights
+                            schema_context += f"\nData Insights for {table}:\n"
+                            for col in sample_df.columns:
+                                unique_values = sample_df[col].nunique()
+                                has_nulls = sample_df[col].isnull().any()
+                                schema_context += f"  • {col}: {unique_values} unique values"
+                                if has_nulls:
+                                    schema_context += " (contains nulls)"
+                                sample_values = sample_df[col].dropna().unique()[:3]
+                                if len(sample_values) > 0:
+                                    schema_context += f" - Sample values: {', '.join(str(v) for v in sample_values)}"
+                                schema_context += "\n"
+                        else:
+                            schema_context += f"\nSample Data: Table {table} appears to be empty\n"
+                    except Exception as e:
+                        schema_context += f"\nSample Data: Could not retrieve sample data for {table} ({str(e)})\n"
+                
+                schema_context += "\n"
+        
+        sql_guidelines = """PostgreSQL SQL Guidelines:
+- Use PostgreSQL-specific functions: NOW(), CURRENT_DATE, CURRENT_TIMESTAMP, TO_CHAR(), TO_DATE(), CONCAT(), COALESCE()
+- Use LIMIT for row limiting and OFFSET for pagination
+- Use standard JOIN syntax (INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN)
+- Use proper PostgreSQL data types: INTEGER, BIGINT, NUMERIC, VARCHAR, TEXT, TIMESTAMP, DATE, BOOLEAN, JSON, JSONB
+- Use PostgreSQL-specific features: RETURNING clause, ON CONFLICT, CTEs with WITH
+- Use double quotes for identifiers if they contain special characters or are case-sensitive
+- Use single quotes for string literals
+- Use PostgreSQL date/time functions: EXTRACT(), DATE_PART(), AGE(), INTERVAL
+- Support for array types and array functions if applicable
+- Use ILIKE for case-insensitive pattern matching"""
+        
+        prompt = f"""<|system|>
+You are an expert PostgreSQL SQL developer. Your ONLY task is to convert natural language queries into PostgreSQL SQL statements.
+
+CRITICAL RULES:
+1. Return ONLY the SQL query - nothing else
+2. NO explanations, NO thinking, NO markdown, NO code blocks
+3. NO "Let me think about this" or similar phrases
+4. NO "Here's the SQL query:" or similar introductions
+5. Start directly with SELECT, WITH, INSERT, UPDATE, or DELETE
+6. End with the SQL query - no additional text
+7. DO NOT include any thinking process or reasoning
+8. DO NOT explain your approach or methodology
+9. DO NOT use phrases like "I'll create a query that..." or "The SQL would be..."
+10. JUST return the raw SQL query
+
+IMPORTANT CONTEXT USAGE:
+- The Database Schema section below is the authoritative source for all table and column names. Use ONLY these names in your SQL.
+- The schema context describes the structure, relationships, and data types. Use it to determine joins, filters, and query logic.
+- The Sample Data section is provided ONLY to help you understand the kind of data in each column. DO NOT use sample values for filtering, limiting, or selection in your SQL. Do NOT assume the sample data is complete or representative of all possible values.
+- Always use the schema context for query structure, joins, and relationships. Use sample data only for context, not for query logic.
+
+{sql_guidelines}
+
+Database Schema and Sample Data:
+{schema_context}
+
+Instructions:
+- Generate ONLY the PostgreSQL SQL query
+- Use exact table and column names from the schema above
+- For multiple tables, use appropriate JOINs based on foreign key relationships
+- Include proper WHERE clauses, GROUP BY, HAVING as needed
+- Use PostgreSQL date functions for date comparisons and formatting
+- Ensure the query is safe (no DROP, TRUNCATE unless explicitly requested)
+- Consider the sample data patterns and data types shown, but do NOT use sample values for filtering or selection
+- Use the data insights to write appropriate conditions, but always rely on the schema for structure
+- Return ONLY the raw SQL query - no explanations, thinking, or formatting
+</s>
+
+<|user|>
+Convert to PostgreSQL SQL: {natural_query}
+</s>
+
+<|assistant|>"""
+
+        try:
+            response = self.model.generate_content(prompt)
+            sql_query = response.text.strip()
+
+            # Clean the response (same logic as other LLM managers)
+            import re
+            sql_keywords = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")
+            lines = sql_query.split('\n')
+            cleaned_lines = []
+            in_sql = False
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if any(skip in line.lower() for skip in [
+                    'think:', 'thinking:', 'let me', 'i need to', 'okay,',
+                    "here's", 'the sql query is', '```sql', '```', 'sql:',
+                    'answer:', 'solution:', 'query:', 'result:'
+                ]):
+                    continue
+                if any(line.upper().startswith(kw) for kw in sql_keywords):
+                    in_sql = True
+                if in_sql:
+                    if any(skip in line.lower() for skip in [
+                        'think:', 'explanation:', 'answer:', 'solution:', 'query:', 'result:', '```']):
+                        break
+                    cleaned_lines.append(line)
+            
+            if not cleaned_lines:
+                sql_pattern = r"(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE)[\s\S]+"
+                match = re.search(sql_pattern, sql_query, re.IGNORECASE)
+                if match:
+                    cleaned_lines = [match.group(0).strip()]
+            
+            final_sql = ' '.join(cleaned_lines).strip()
+            if not final_sql:
+                final_sql = sql_query
+            
+            # Debug: Print the cleaned SQL
+            print(f"DEBUG: PostgreSQL Original response length: {len(sql_query)}")
+            print(f"DEBUG: PostgreSQL Cleaned SQL length: {len(final_sql)}")
+            print(f"DEBUG: PostgreSQL Final SQL: {final_sql[:200]}...")
+            
             return final_sql
         except Exception as e:
             raise Exception(f"Gemini API error: {str(e)}")
@@ -856,6 +1292,10 @@ SELECT"""
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
 
 @app.route('/connect_db', methods=['POST'])
 def connect_db():
@@ -867,6 +1307,15 @@ def connect_db():
         # Create appropriate database manager
         if db_type == 'mysql':
             db_manager = MySQLDatabaseManager()
+            success = db_manager.connect(
+                host=data['host'],
+                port=data['port'],
+                database=data['database'],
+                username=data['username'],
+                password=data['password']
+            )
+        elif db_type == 'postgresql':
+            db_manager = PostgreSQLDatabaseManager()
             success = db_manager.connect(
                 host=data['host'],
                 port=data['port'],
@@ -923,9 +1372,11 @@ def init_llm():
                 return jsonify({'success': False, 'message': 'No centralized Gemini API key configured on the server.'})
             model_name = data.get('model', 'gemini-1.5-pro')
             
-            # Use MySQL-specific LLM manager if connected to MySQL
+            # Use database-specific LLM manager
             if db_type == 'mysql':
                 llm_manager = MySQLLLMManager(api_key, model_name)
+            elif db_type == 'postgresql':
+                llm_manager = PostgreSQLLLMManager(api_key, model_name)
             else:
                 llm_manager = LLMManager(api_key, model_name)  # Oracle LLM manager
         
