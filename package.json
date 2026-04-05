@@ -1,0 +1,23 @@
+{
+  "name": "sql-chat",
+  "version": "1.0.0",
+  "description": "Natural Language to SQL for Oracle, MySQL, and PostgreSQL",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "sql",
+    "chat",
+    "ai",
+    "database"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

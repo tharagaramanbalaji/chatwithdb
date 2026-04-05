@@ -94,3 +94,7 @@ query_results_*.csv
 # Ignore secrets
 *.env
 .env.*
+
+# Node.js
+node_modules/
+package-lock.json
