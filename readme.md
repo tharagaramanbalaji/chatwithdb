@@ -102,6 +102,3 @@ The application features a modern, high-contrast dark theme designed for develop
 This project is licensed under the **MIT License**.
 
 ---
-
-**Developed with ❤️ by the Antigravity Team.**
-Let me know if you want to add more sections or need help troubleshooting!
