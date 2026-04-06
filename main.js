@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -9,14 +9,39 @@ let flaskProcess;
 function startFlask() {
   console.log("Starting Flask server...");
   
-  // Use the virtual environment python
-  const pythonPath = path.join(__dirname, 'vebnv', 'Scripts', 'python.exe');
+  const isDev = !app.isPackaged;
+  let exePath;
+  let args = [];
+
+  if (isDev) {
+    // Development mode: use the virtual environment python
+    exePath = path.join(__dirname, 'vebnv', 'Scripts', 'python.exe');
+    args = ['app.py'];
+  } else {
+    // Production mode: use the bundled executable
+    // We expect it to be in the 'bin' folder inside extraResources
+    exePath = path.join(process.resourcesPath, 'bin', 'app.exe');
+  }
+
+  const cwd = isDev ? __dirname : path.join(process.resourcesPath, 'bin');
   
+  console.log(`Using execution path: ${exePath}`);
+  console.log(`Using working directory: ${cwd}`);
+
   // Spawn the flask process
-  // Adjust the script name if you have a different entry point
-  flaskProcess = spawn(pythonPath, ['app.py'], {
-    cwd: __dirname,
+  flaskProcess = spawn(exePath, args, {
+    cwd: cwd,
     env: { ...process.env, PORT: '5000' }
+  });
+
+  flaskProcess.on('error', (err) => {
+    console.error(`Failed to start Flask: ${err}`);
+    if (!isDev) {
+      dialog.showErrorBox(
+        'Backend Error',
+        `Failed to start the backend server.\n\nPath: ${exePath}\nError: ${err.message}\n\nPlease check if your antivirus is blocking the file.`
+      );
+    }
   });
 
   flaskProcess.stdout.on('data', (data) => {

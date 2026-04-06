@@ -16,7 +16,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = Flask(__name__)
+import sys
+import os
+
+# Configure paths for PyInstaller bundling
+if getattr(sys, 'frozen', False):
+    # If running as a bundled executable
+    template_folder = os.path.join(sys._MEIPASS, 'templates')
+    static_folder = os.path.join(sys._MEIPASS, 'static')
+    app = Flask(__name__, template_folder=template_folder, static_folder=static_folder)
+else:
+    # If running from source
+    app = Flask(__name__)
+
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 app.config['SESSION_TYPE'] = 'filesystem'  
 Session(app)
@@ -1367,9 +1379,12 @@ def init_llm():
             base_url = data.get('base_url', 'http://localhost:11434')
             llm_manager = OllamaLLMManager(model_name, base_url)
         else:  # gemini
-            api_key = os.environ.get('GEMINI_API_KEY')
+            # Get the user provided API key from the request
+            api_key = data.get('api_key')
+                
             if not api_key:
-                return jsonify({'success': False, 'message': 'No centralized Gemini API key configured on the server.'})
+                return jsonify({'success': False, 'message': 'No Gemini API key provided. Please enter your API key in the configuration panel.'})
+            
             model_name = data.get('model', 'gemini-1.5-pro')
             
             # Use database-specific LLM manager

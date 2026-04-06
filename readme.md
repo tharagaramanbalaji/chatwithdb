@@ -23,8 +23,8 @@ This web application allows you to connect to your Oracle database and use AI (G
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/yourusername/yourrepo.git
-cd yourrepo
+git clone [YOUR_GITHUB_URL]
+cd [YOUR_REPO_NAME]
 pip install -r requirements.txt
 ```
 

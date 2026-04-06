@@ -4,7 +4,29 @@
   "description": "Natural Language to SQL for Oracle, MySQL, and PostgreSQL",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.chatwithdb.sqlchat",
+    "productName": "SQL Chat",
+    "directories": {
+      "output": "dist/electron"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "extraResources": [
+      {
+        "from": "dist/backend/app.exe",
+        "to": "bin/app.exe"
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "templates/**/*"
+    ]
   },
   "keywords": [
     "sql",
@@ -15,7 +37,8 @@
   "author": "Antigravity",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^26.8.1"
   },
   "dependencies": {
     "dotenv": "^16.4.5"

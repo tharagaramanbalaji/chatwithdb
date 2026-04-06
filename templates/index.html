@@ -752,9 +752,9 @@
 
         <!-- Gemini Config -->
         <div id="gemini-config">
-          <input class="config-input" type="password" id="api-key" placeholder="Google AI API Key" disabled value="Centrally managed by admin" />
+          <input class="config-input" type="password" id="api-key" placeholder="Enter your Gemini API Key here..." value="" />
           <small style="color:var(--text-muted);font-size:0.75rem;display:block;margin-bottom:8px;">
-            The Gemini API key is managed by the server administrator.
+            Your Gemini API key is used to generate SQL queries.
           </small>
           <select class="config-input" id="gemini-model-choice">
             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
@@ -1104,6 +1104,7 @@
 
         if (llmType === 'gemini') {
           data.model = $('#gemini-model-choice').val();
+          data.api_key = $('#api-key').val().trim();
         } else if (llmType === 'ollama') {
           const baseUrl = $('#ollama-base-url').val().trim();
           if (!baseUrl) { showAlert('warning', 'Please enter the Ollama base URL.'); return; }
