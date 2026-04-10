@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/frontend/dist/$1"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/frontend/dist/index.html",
+      "permanent": false
+    }
+  ]
+}

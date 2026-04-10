@@ -99,6 +99,8 @@ CRITICAL RULES:
 8. DO NOT explain your approach or methodology
 9. DO NOT use phrases like "I'll create a query that..." or "The SQL would be..."
 10. JUST return the raw SQL query
+11. SCHEMA SCOPING: For PostgreSQL, if you query information_schema, ALWAYS include 'AND table_schema = ''public''' to avoid hitting system or auth tables.
+12. IDENTIFIER QUOTING: Always use double quotes for table and column names (e.g., "users" instead of users) to avoid conflicts with reserved keywords.
 
 IMPORTANT CONTEXT USAGE:
 - The Database Schema section below is the authoritative source for all table and column names. Use ONLY these names in your SQL.
@@ -113,8 +115,8 @@ Database Schema and Sample Data:
 
 Instructions:
 - Generate ONLY the {db_type.upper()} SQL query
-- Use exact table and column names from the schema above
-- For multiple tables, use appropriate JOINs
+- Use exact table and column names from the schema above, always enclosed in double quotes for PostgreSQL.
+- For multiple tables, use appropriate JOINs.
 - Return ONLY the raw SQL query
 </s>
 

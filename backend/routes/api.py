@@ -9,9 +9,56 @@ from llm import get_llm_manager
 
 api_bp = Blueprint('api', __name__)
 
-# Global variables (matching original implementation)
-db_manager = None
-llm_manager = None
+api_bp = Blueprint('api', __name__)
+
+# Helper functions for session-based managers
+def get_current_db_manager():
+    """Re-initialize DB manager from session credentials"""
+    if not session.get('db_connected'):
+        return None
+    
+    db_type = session.get('db_type')
+    creds = session.get('db_creds', {})
+    
+    try:
+        manager = get_db_manager(db_type)
+        if db_type in ['mysql', 'postgresql']:
+            manager.connect(
+                host=creds.get('host'),
+                port=creds.get('port'),
+                database=creds.get('database'),
+                username=creds.get('username'),
+                password=creds.get('password')
+            )
+        else:  # oracle
+            manager.connect(
+                creds.get('username'), 
+                creds.get('password'), 
+                creds.get('host'), 
+                creds.get('port'), 
+                creds.get('service_name')
+            )
+        return manager
+    except Exception as e:
+        print(f"Error re-connecting to database: {str(e)}")
+        return None
+
+def get_current_llm_manager():
+    """Re-initialize LLM manager from session config"""
+    if not session.get('llm_initialized'):
+        return None
+    
+    llm_type = session.get('llm_type', 'gemini')
+    config = session.get('llm_config', {})
+    
+    try:
+        if llm_type == 'ollama':
+            return get_llm_manager("ollama", model_name=config.get('model'), base_url=config.get('base_url'))
+        else:  # gemini
+            return get_llm_manager("gemini", model_name=config.get('model'), api_key=config.get('api_key'))
+    except Exception as e:
+        print(f"Error re-initializing LLM: {str(e)}")
+        return None
 
 @api_bp.route('/')
 def index():
@@ -23,38 +70,53 @@ def favicon():
 
 @api_bp.route('/connect_db', methods=['POST'])
 def connect_db():
-    global db_manager
     try:
         data = request.json
         db_type = data.get('db_type', 'oracle')
         
         # Create appropriate database manager
-        db_manager = get_db_manager(db_type)
+        manager = get_db_manager(db_type)
         
         if db_type in ['mysql', 'postgresql']:
-            success = db_manager.connect(
+            success = manager.connect(
                 host=data['host'],
                 port=data['port'],
                 database=data['database'],
                 username=data['username'],
                 password=data['password']
             )
+            creds = {
+                'host': data['host'],
+                'port': data['port'],
+                'database': data['database'],
+                'username': data['username'],
+                'password': data['password']
+            }
         else:  # oracle
-            success = db_manager.connect(
+            service_name = data.get('service_name', data.get('database'))
+            success = manager.connect(
                 data['username'], 
                 data['password'], 
                 data['host'], 
                 data['port'], 
-                data.get('service_name', data.get('database'))
+                service_name
             )
+            creds = {
+                'username': data['username'],
+                'password': data['password'],
+                'host': data['host'],
+                'port': data['port'],
+                'service_name': service_name
+            }
         
         if success:
             # Load schema info
-            all_tables = db_manager.get_all_tables()
-            schema_info = db_manager.get_table_schema()
+            all_tables = manager.get_all_tables()
+            schema_info = manager.get_table_schema()
             
             session['db_connected'] = True
             session['db_type'] = db_type
+            session['db_creds'] = creds  # Store creds for re-connection
             session['all_tables'] = all_tables
             session['schema_info'] = schema_info
             
@@ -71,7 +133,6 @@ def connect_db():
 
 @api_bp.route('/init_llm', methods=['POST'])
 def init_llm():
-    global llm_manager
     try:
         data = request.json
         llm_type = data.get('llm_type', 'gemini')
@@ -80,17 +141,27 @@ def init_llm():
         if llm_type == 'ollama':
             model_name = data.get('model', 'llama2')
             base_url = data.get('base_url', 'http://localhost:11434')
-            llm_manager = get_llm_manager("ollama", model_name=model_name, base_url=base_url)
+            llm_config = {'model': model_name, 'base_url': base_url}
         else:  # gemini
             api_key = data.get('api_key')
             if not api_key:
                 return jsonify({'success': False, 'message': 'No Gemini API key provided. Please enter your API key in the configuration panel.'})
             
             model_name = data.get('model', 'gemini-1.5-pro')
-            llm_manager = get_llm_manager("gemini", model_name=model_name, api_key=api_key)
+            llm_config = {'model': model_name, 'api_key': api_key}
         
+        # Test initialization
+        try:
+            if llm_type == 'ollama':
+                get_llm_manager("ollama", model_name=model_name, base_url=base_url)
+            else:
+                get_llm_manager("gemini", model_name=model_name, api_key=api_key)
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'LLM initialization failed: {str(e)}'})
+
         session['llm_initialized'] = True
         session['llm_type'] = llm_type
+        session['llm_config'] = llm_config
         
         return jsonify({'success': True, 'message': f'{llm_type.capitalize()} initialized successfully for {db_type.upper()}!'})
     except Exception as e:
@@ -107,6 +178,10 @@ def get_table_info(table_name):
     if 'schema_info' in session and table_name in session['schema_info']:
         table_info = session['schema_info'][table_name]
         
+        db_manager = get_current_db_manager()
+        if not db_manager:
+            return jsonify({'error': 'Database disconnected'})
+            
         # Get sample data
         sample_df = db_manager.get_sample_data(table_name, limit=5)
         sample_data = None
@@ -130,10 +205,12 @@ def generate_sql():
         selected_tables = data['tables']
         include_sample = data.get('include_sample', True)
         
+        llm_manager = get_current_llm_manager()
         if not llm_manager:
             return jsonify({'success': False, 'message': 'LLM not initialized'})
         
-        if not session.get('db_connected'):
+        db_manager = get_current_db_manager()
+        if not session.get('db_connected') or not db_manager:
             return jsonify({'success': False, 'message': 'Database not connected'})
         
         schema_info = session.get('schema_info', {})
@@ -159,8 +236,11 @@ def execute_sql():
         sql = data['sql']
         # Debug print to show the SQL being executed
         print(f"DEBUG: Executing SQL: {sql}")
-        if not session.get('db_connected'):
+        
+        db_manager = get_current_db_manager()
+        if not session.get('db_connected') or not db_manager:
             return jsonify({'success': False, 'message': 'Database not connected'})
+            
         result_df = db_manager.execute_query(sql)
         
         # Convert DataFrame to JSON

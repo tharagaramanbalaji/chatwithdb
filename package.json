@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "build": "npm run build --prefix frontend",
     "dist": "electron-builder"
   },
   "build": {
