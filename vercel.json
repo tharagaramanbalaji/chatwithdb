@@ -11,14 +11,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "/frontend/dist/$1"
-    }
-  ],
-  "redirects": [
-    {
-      "source": "/",
-      "destination": "/frontend/dist/index.html",
-      "permanent": false
+      "destination": "/index.html"
     }
   ]
 }
