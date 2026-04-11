@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template, send_from_directory
 from flask_session import Session 
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -9,7 +9,14 @@ from routes import api_bp
 
 load_dotenv()
 
-app = Flask(__name__)
+# Define absolute paths for React assets
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIST = os.path.normpath(os.path.join(BASE_DIR, '..', 'frontend', 'dist'))
+
+app = Flask(__name__, 
+            static_folder=FRONTEND_DIST, 
+            template_folder=FRONTEND_DIST,
+            static_url_path='')
 # Enable CORS for frontend development
 CORS(app)
 
@@ -23,8 +30,17 @@ Session(app)
 def health_check():
     return jsonify({"status": "healthy", "service": "chatwithdb-api"})
 
-# Register all API endpoints and UI routes
+# Register all API endpoints
 app.register_blueprint(api_bp, url_prefix='/api')
+
+# Serve React App
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_react(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return render_template('index.html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

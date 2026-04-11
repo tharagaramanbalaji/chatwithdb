@@ -58,10 +58,7 @@ def get_current_llm_manager():
         print(f"Error re-initializing LLM: {str(e)}")
         return None
 
-@api_bp.route('/')
-def index():
-    return render_template('index.html')
-
+# API endpoints follow
 @api_bp.route('/favicon.ico')
 def favicon():
     return '', 204
