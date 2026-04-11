@@ -9,12 +9,17 @@ class PostgreSQLDatabaseManager:
         
     def connect(self, host: str, port: str, database: str, username: str, password: str) -> bool:
         try:
+            # Most cloud providers (like Supabase) require SSL. 
+            # We use 'require' but allow localhost to bypass if needed.
+            ssl_mode = 'require' if host not in ['localhost', '127.0.0.1'] else 'prefer'
+            
             self.connection = psycopg2.connect(
                 host=host,
-                port=int(port),
+                port=int(port) if port else 5432,
                 database=database,
                 user=username,
-                password=password
+                password=password,
+                sslmode=ssl_mode
             )
             return True
         except Exception as e:

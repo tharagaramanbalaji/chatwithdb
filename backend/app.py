@@ -14,7 +14,8 @@ app = Flask(__name__)
 CORS(app)
 
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
-app.config['SESSION_TYPE'] = 'filesystem'  
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = '/tmp/flask_session'
 Session(app)
 
 # Health check endpoint

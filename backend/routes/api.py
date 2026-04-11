@@ -9,8 +9,6 @@ from llm import get_llm_manager
 
 api_bp = Blueprint('api', __name__)
 
-api_bp = Blueprint('api', __name__)
-
 # Helper functions for session-based managers
 def get_current_db_manager():
     """Re-initialize DB manager from session credentials"""
@@ -129,7 +127,10 @@ def connect_db():
         else:
             return jsonify({'success': False, 'message': 'Connection failed'})
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        import traceback
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"ERROR in connect_db: {error_msg}")
+        return jsonify({'success': False, 'message': f"Server Error: {str(e)}"})
 
 @api_bp.route('/init_llm', methods=['POST'])
 def init_llm():
