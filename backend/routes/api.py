@@ -20,23 +20,20 @@ def get_current_db_manager():
     
     try:
         manager = get_db_manager(db_type)
-        if db_type in ['mysql', 'postgresql']:
-            manager.connect(
-                host=creds.get('host'),
-                port=creds.get('port'),
-                database=creds.get('database'),
-                username=creds.get('username'),
-                password=creds.get('password')
-            )
-        else:  # oracle
-            manager.connect(
-                creds.get('username'), 
-                creds.get('password'), 
-                creds.get('host'), 
-                creds.get('port'), 
-                creds.get('service_name')
-            )
-        return manager
+        success, msg = manager.connect(
+            host=creds.get('host'),
+            port=creds.get('port'),
+            database=creds.get('database'),
+            username=creds.get('username'),
+            password=creds.get('password')
+        ) if db_type in ['mysql', 'postgresql'] else manager.connect(
+            creds.get('username'), 
+            creds.get('password'), 
+            creds.get('host'), 
+            creds.get('port'), 
+            creds.get('service_name')
+        )
+        return manager if success else None
     except Exception as e:
         print(f"Error re-connecting to database: {str(e)}")
         return None
@@ -73,7 +70,7 @@ def connect_db():
         manager = get_db_manager(db_type)
         
         if db_type in ['mysql', 'postgresql']:
-            success = manager.connect(
+            success, message = manager.connect(
                 host=data['host'],
                 port=data['port'],
                 database=data['database'],
@@ -89,7 +86,7 @@ def connect_db():
             }
         else:  # oracle
             service_name = data.get('service_name', data.get('database'))
-            success = manager.connect(
+            success, message = manager.connect(
                 data['username'], 
                 data['password'], 
                 data['host'], 
@@ -122,7 +119,7 @@ def connect_db():
                 'db_type': db_type
             })
         else:
-            return jsonify({'success': False, 'message': 'Connection failed'})
+            return jsonify({'success': False, 'message': message or 'Connection failed'})
     except Exception as e:
         import traceback
         error_msg = f"{str(e)}\n{traceback.format_exc()}"

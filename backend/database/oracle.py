@@ -7,8 +7,8 @@ class OracleDatabaseManager:
         self.connection = None
         self.db_type = "oracle"
         
-    def connect(self, host: str, port: str, database: str, username: str, password: str) -> bool:
-        """Connect to Oracle database. database maps to service_name"""
+    def connect(self, username, password, host, port, service_name):
+        """Connect to Oracle database. service_name maps to database"""
         try:
             if not hasattr(self, '_client_initialized'):
                 try:
@@ -17,16 +17,17 @@ class OracleDatabaseManager:
                     pass
                 self._client_initialized = True
             
-            dsn = f"{host}:{port}/{database}"
+            dsn = f"{host}:{port}/{service_name}"
             self.connection = oracledb.connect(
                 user=username,
                 password=password,
                 dsn=dsn
             )
-            return True
+            return True, "Connected successfully"
         except Exception as e:
-            print(f"Database connection failed: {str(e)}")
-            return False
+            error_msg = str(e)
+            print(f"Oracle connection failed: {error_msg}")
+            return False, error_msg
             
     def get_all_tables(self) -> List[str]:
         if not self.connection:

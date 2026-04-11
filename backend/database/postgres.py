@@ -7,7 +7,7 @@ class PostgreSQLDatabaseManager:
         self.connection = None
         self.db_type = "postgresql"
         
-    def connect(self, host: str, port: str, database: str, username: str, password: str) -> bool:
+    def connect(self, host: str, port: str, database: str, username: str, password: str):
         try:
             # Most cloud providers (like Supabase) require SSL. 
             # We use 'require' but allow localhost to bypass if needed.
@@ -21,10 +21,11 @@ class PostgreSQLDatabaseManager:
                 password=password,
                 sslmode=ssl_mode
             )
-            return True
+            return True, "Connected successfully"
         except Exception as e:
-            print(f"PostgreSQL connection failed: {str(e)}")
-            return False
+            error_msg = str(e)
+            print(f"PostgreSQL connection failed: {error_msg}")
+            return False, error_msg
             
     def get_all_tables(self) -> List[str]:
         if not self.connection:

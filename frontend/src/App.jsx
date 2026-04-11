@@ -400,9 +400,7 @@ function App() {
               value={['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-pro-exp-02-05', 'gemini-2.0-flash-lite-preview-02-05'].includes(llmConfig.model) ? llmConfig.model : 'custom'} 
               onChange={e => {
                 const val = e.target.value;
-                if (val !== 'custom') {
-                  setLlmConfig({...llmConfig, model: val});
-                }
+                setLlmConfig({...llmConfig, model: val === 'custom' ? '' : val});
               }}
             >
               <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
@@ -412,14 +410,20 @@ function App() {
               <option value="gemini-2.0-flash-lite-preview-02-05">Gemini 2.0 Flash Lite (Preview)</option>
               <option value="custom">-- Enter Custom Model --</option>
             </select>
-            {(!['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-pro-exp-02-05', 'gemini-2.0-flash-lite-preview-02-05'].includes(llmConfig.model) || llmConfig.model === 'custom') && (
-              <input 
-                className="config-input" 
-                type="text" 
-                placeholder="Enter model name (e.g. gemini-1.5-flash)" 
-                value={llmConfig.model === 'custom' ? '' : llmConfig.model}
-                onChange={e => setLlmConfig({...llmConfig, model: e.target.value})}
-              />
+
+            {!['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-pro-exp-02-05', 'gemini-2.0-flash-lite-preview-02-05'].includes(llmConfig.model) && (
+              <div className="mt-1">
+                <input 
+                  className="config-input" 
+                  type="text" 
+                  placeholder="Enter custom model name (e.g. gemini-1.5-flash-8b)" 
+                  value={llmConfig.model}
+                  onChange={e => setLlmConfig({...llmConfig, model: e.target.value})}
+                />
+                <small style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                  Tip: Use names like <code>gemini-1.5-flash-8b</code>
+                </small>
+              </div>
             )}
             <input 
               className="config-input" 
